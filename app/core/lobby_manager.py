@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
+from app.core.game_room_manager import game_room_manager
+from app.models.game_room import GameRoom
 from app.models.lobby import Lobby, LobbyStatus
 from app.models.player import PlayerStatus
 
@@ -126,6 +128,40 @@ class LobbyManager:
         async with self._lock:
             lobby = self._lobbies.get(lobby_id)
             return lobby
+
+    async def start_game(self, lobby_id: str, player_id: str) -> GameRoom:
+        """Convert a lobby into a locked game room; players move to in-game."""
+        async with self._lock:
+            lobby = self._lobbies.pop(lobby_id, None)
+            if lobby is None:
+                msg = "Lobby not found"
+                raise LookupError(msg)
+            if player_id not in lobby.players:
+                self._lobbies[lobby_id] = lobby
+                msg = "Player is not in this lobby"
+                raise ValueError(msg)
+
+            room = GameRoom(
+                id=lobby_id,
+                players=lobby.players,
+                game_state={},
+                locked=True,
+            )
+
+        try:
+            await game_room_manager.register_room(room)
+        except Exception:
+            async with self._lock:
+                self._lobbies[lobby_id] = lobby
+            raise
+
+        for pid in room.players:
+            await connection_manager.update_player(
+                pid,
+                status=PlayerStatus.IN_GAME,
+                current_room=room.id,
+            )
+        return room
 
     async def remove_player_from_all_lobbies(self, player_id: str) -> None:
         """Remove the player from any lobby (disconnect). Deletes empty lobbies."""

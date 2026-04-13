@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.connection_manager import connection_manager
+from app.core.game_room_manager import game_room_manager
 from app.core.lobby_manager import lobby_manager
 
 router = APIRouter(tags=["websocket"])
@@ -32,4 +33,5 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         pass
     finally:
         await lobby_manager.remove_player_from_all_lobbies(connection_id)
+        await game_room_manager.remove_player_from_all_rooms(connection_id)
         await connection_manager.disconnect(connection_id)

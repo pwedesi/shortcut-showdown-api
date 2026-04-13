@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
+from app.api.game_rooms import game_room_to_response
 from app.core.lobby_manager import lobby_manager
 from app.models.lobby import Lobby
 
@@ -59,6 +60,24 @@ async def join_lobby(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
             detail=str(exc),
         ) from exc
     return _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/start")
+async def start_game(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
+    """Start a match: lobby becomes a locked game room; players enter gameplay."""
+    try:
+        room = await lobby_manager.start_game(lobby_id, body.player_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return game_room_to_response(room)
 
 
 @router.post("/{lobby_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
