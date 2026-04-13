@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     port: int = 8000
     host: str = "127.0.0.1"
     environment: str = "development"
+    lobby_max_players: int = 2
 
 
 @lru_cache
