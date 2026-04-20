@@ -31,7 +31,14 @@ def test_start_converts_lobby_to_game_room_and_locks() -> None:
             assert body["id"] == lobby_id
             assert body["players"] == [p1, p2]
             assert body["locked"] is True
-            assert body["game_state"] == {}
+            # a shared sequence of shortcut challenges should be present
+            assert "challenges" in body["game_state"]
+            challenges = body["game_state"]["challenges"]
+            assert isinstance(challenges, list)
+            assert len(challenges) >= 10
+            for ch in challenges:
+                assert "prompt" in ch
+                assert "expectedKeys" not in ch
 
             assert client.get(f"/lobbies/{lobby_id}").status_code == 404
 
