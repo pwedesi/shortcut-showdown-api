@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     environment: str = "development"
     lobby_max_players: int = 2
+    challenge_count: int = 10
 
 
 @lru_cache

@@ -1,0 +1,149 @@
+{
+  "info": {
+    "name": "Shortcut Showdown API",
+    "_postman_id": "b3f9d7e2-8a1b-4c2b-9f6d-1a2b3c4d5e6f",
+    "description": "NOTE: Postman does not reliably import WebSocket requests from collection JSON. Create WebSocket connections manually in the Postman app (New → WebSocket) and connect to ws://127.0.0.1:8000/ws. See postman/README.md for detailed steps.\n\nComplete user flow for Issue #3 (Input Validation & Game Result System).\n\nSteps: connect two WebSocket clients (manual), create lobby, join, start game, send inputs, observe progress/penalties/rankings.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - WebSocket: Connect Player 1 (manual)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "ws://127.0.0.1:8000/ws", "protocol": "ws", "host": ["127.0.0.1"], "port": "8000", "path": ["ws"] },
+        "description": "Open the WebSocket tab in Postman and connect to ws://127.0.0.1:8000/ws.\nOn connect you'll receive: { \"event\": \"connect\", \"player_id\": \"<id>\" }.\nCopy the player_id into the environment variable 'player_id'."
+      },
+      "response": []
+    },
+    {
+      "name": "02 - Create Lobby (host = player1)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{ \"player_id\": \"{{player_id}}\" }" },
+        "url": { "raw": "http://127.0.0.1:8000/lobbies", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["lobbies"] },
+        "description": "Create a lobby using the `player_id` obtained from the WebSocket connection."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Create lobby - status is 201', function () {",
+              "  pm.response.to.have.status(201);",
+              "  var json = pm.response.json();",
+              "  pm.environment.set('lobby_id', json.id);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "03 - WebSocket: Connect Player 2 (manual)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "ws://127.0.0.1:8000/ws", "protocol": "ws", "host": ["127.0.0.1"], "port": "8000", "path": ["ws"] },
+        "description": "Open a second WebSocket connection and copy the returned player_id into 'player2_id'."
+      },
+      "response": []
+    },
+    {
+      "name": "04 - Join Lobby (player2)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{ \"player_id\": \"{{player2_id}}\" }" },
+        "url": { "raw": "http://127.0.0.1:8000/lobbies/{{lobby_id}}/join", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["lobbies","{{lobby_id}}","join"] },
+        "description": "Join the lobby as the second player (use player2_id)."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Join lobby - status 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "05 - Start Game (host)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{ \"player_id\": \"{{player_id}}\" }" },
+        "url": { "raw": "http://127.0.0.1:8000/lobbies/{{lobby_id}}/start", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["lobbies","{{lobby_id}}","start"] },
+        "description": "Start the game as the lobby host. The response contains public game_state.challenges."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Start game - status 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "  var json = pm.response.json();",
+              "  pm.environment.set('room_id', json.id);",
+              "  pm.test('challenges present', function () { pm.expect(json.game_state).to.have.property('challenges'); pm.expect(json.game_state.challenges.length).to.be.at.least(10); });",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "06 - Get Game Room (public state)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "http://127.0.0.1:8000/game-rooms/{{room_id}}", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["game-rooms","{{room_id}}"] },
+        "description": "Inspect the public game state (challenges without expectedKeys). Use this to know the prompts players see."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": [ "pm.test('Get game room - status 200', function () {", "  pm.response.to.have.status(200);", "  var json = pm.response.json();", "  pm.test('public challenges present', function() { pm.expect(json.game_state).to.have.property('challenges'); });", "});" ] }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "07 - WebSocket: Example Inputs (manual send)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "ws://127.0.0.1:8000/ws", "protocol": "ws", "host": ["127.0.0.1"], "port": "8000", "path": ["ws"] },
+        "description": "Use the WebSocket connection(s) to send JSON messages. Example bodies to paste into the WebSocket Send box:\n\nCorrect example for common prompts:\n{ \"event\": \"input\", \"keys\": [\"ctrl\", \"c\"] }  // Copy\n{ \"event\": \"input\", \"keys\": [\"ctrl\", \"v\"] }  // Paste\nIncorrect example:\n{ \"event\": \"input\", \"keys\": [\"wrong\"] }\n\nWatch the WS response stream for progress_update, penalty, and game_result events."
+      },
+      "response": []
+    },
+    {
+      "name": "08 - Leave Lobby (optional)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": { "mode": "raw", "raw": "{ \"player_id\": \"{{player_id}}\" }" },
+        "url": { "raw": "http://127.0.0.1:8000/lobbies/{{lobby_id}}/leave", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["lobbies","{{lobby_id}}","leave"] },
+        "description": "Optional: host can leave the lobby (HTTP 204)."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000" },
+    { "key": "ws_url", "value": "ws://127.0.0.1:8000/ws" },
+    { "key": "player_id", "value": "" },
+    { "key": "player2_id", "value": "" },
+    { "key": "lobby_id", "value": "" },
+    { "key": "room_id", "value": "" }
+  ]
+}

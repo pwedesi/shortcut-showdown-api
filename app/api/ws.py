@@ -1,8 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+import json
 
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.core.lobby_manager import lobby_manager
+from app.core.game_engine import game_engine
 
 router = APIRouter(tags=["websocket"])
 
@@ -22,13 +24,31 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         )
         while True:
             text = await websocket.receive_text()
-            await connection_manager.send_personal_message(
-                connection_id,
-                {
-                    "event": "message",
-                    "data": text,
-                },
-            )
+            # try to parse JSON messages with structured events
+            try:
+                payload = json.loads(text)
+            except Exception:
+                await connection_manager.send_personal_message(
+                    connection_id,
+                    {
+                        "event": "message",
+                        "data": text,
+                    },
+                )
+                continue
+
+            # route input events to the game engine
+            event = payload.get("event")
+            if event == "input":
+                await game_engine.process_input(connection_id, payload)
+            else:
+                await connection_manager.send_personal_message(
+                    connection_id,
+                    {
+                        "event": "message",
+                        "data": payload,
+                    },
+                )
     except WebSocketDisconnect:
         pass
     finally:
