@@ -8,6 +8,7 @@ from uuid import uuid4
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
+from app.services.shortcut_engine import generate_shortcut_sequence, publicize_challenges
 from app.models.game_room import GameRoom
 from app.models.lobby import Lobby, LobbyStatus
 from app.models.player import PlayerStatus
@@ -141,10 +142,24 @@ class LobbyManager:
                 msg = "Player is not in this lobby"
                 raise ValueError(msg)
 
+            # generate a shared challenge sequence for the room
+            settings = get_settings()
+            count = getattr(settings, "challenge_count", 10)
+            challenges = generate_shortcut_sequence(count)
+
             room = GameRoom(
                 id=lobby_id,
                 players=lobby.players,
-                game_state={},
+                game_state={
+                    "challenges": challenges,
+                    "progress": {
+                        pid: {"index": 0, "score": 0, "finished": False}
+                        for pid in lobby.players
+                    },
+                    "rate_limit": {},
+                    "finished_order": [],
+                    "finish_times": {},
+                },
                 locked=True,
             )
 
@@ -160,6 +175,17 @@ class LobbyManager:
                 pid,
                 status=PlayerStatus.IN_GAME,
                 current_room=room.id,
+            )
+        # send the same (public) challenge sequence to every player in the room
+        public_challenges = publicize_challenges(room.game_state.get("challenges", []))
+        for pid in room.players:
+            await connection_manager.send_personal_message(
+                pid,
+                {
+                    "event": "challenges",
+                    "room_id": room.id,
+                    "challenges": public_challenges,
+                },
             )
         return room
 

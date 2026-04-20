@@ -6,16 +6,20 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.core.game_room_manager import game_room_manager
 from app.models.game_room import GameRoom
+from app.services.shortcut_engine import publicize_challenges
 
 router = APIRouter(prefix="/game-rooms", tags=["game-rooms"])
 
 
 def game_room_to_response(room: GameRoom) -> dict[str, object]:
-    """Serialize a game room for JSON responses."""
+    """Serialize a game room for JSON responses (hide internal answers)."""
+    public_state: dict[str, object] = {}
+    if "challenges" in room.game_state:
+        public_state["challenges"] = publicize_challenges(room.game_state["challenges"])
     return {
         "id": room.id,
         "players": list(room.players),
-        "game_state": room.game_state,
+        "game_state": public_state,
         "locked": room.locked,
     }
 
