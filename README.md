@@ -10,7 +10,7 @@ Backend service for **Shortcut Showdown**, built with [FastAPI](https://fastapi.
 - **Authoritative player actions** — `POST /game-rooms/{room_id}/attempts` validates attempts server-side and updates room state deterministically.
 - **Rematch flow** — `POST /game-rooms/{room_id}/rematch` creates a fresh lobby for the same live roster once the match is finished, so the next round can start without manual re-join.
 - **Authoritative player identity** — `PATCH /players/{player_id}` stores a server-known callsign for an active WebSocket player, and lobby responses return resolved player identities instead of bare ids.
-- **WebSockets** — `WS /ws` accepts connections, assigns a `player_id`, and echoes text messages with structured JSON events (`connect`, `message`).
+- **WebSockets** — `WS /ws` accepts connections, assigns a `player_id`, and speaks a versioned JSON envelope for lobby and gameplay events.
 
 Gameplay determinism notes:
 - Challenge RNG is server-side and seeded by room id, so all players in a room receive the same objective sequence.
@@ -55,6 +55,56 @@ Lobby payloads return resolved player entries in join order:
 ```
 
 If a player has not set a display name yet, the API falls back to their `player_id` in lobby responses.
+
+## WebSocket Protocol
+
+The recommended realtime path is a versioned envelope with `v`, `type`, and `payload`.
+
+```json
+{
+  "v": 1,
+  "type": "join_lobby",
+  "payload": {
+    "lobby_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+    "player_id": "player-a"
+  }
+}
+```
+
+The server keeps compatibility aliases during the migration window:
+- `event` mirrors `type`
+- top-level payload fields are flattened for older clients
+- raw text still echoes back as `message`
+
+Supported client events:
+- `join_lobby` subscribes the socket to a lobby and returns a `lobby_snapshot`
+- `join_room` subscribes the socket to a room and returns a `room_snapshot`
+- `sync_state` returns the current `game_state_sync` snapshot for a room
+- `input` or `attempt` forwards gameplay attempts to the authoritative engine
+
+Lobby and room broadcasts use the same envelope:
+
+```json
+{
+  "v": 1,
+  "type": "lobby_updated",
+  "payload": {
+    "lobby_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+    "change": "joined",
+    "actor_player_id": "player-b",
+    "lobby": {
+      "id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+      "players": [
+        {"player_id": "player-a", "display_name": "OPERATOR_01"},
+        {"player_id": "player-b", "display_name": "MAVERICK"}
+      ],
+      "status": "full"
+    }
+  }
+}
+```
+
+Gameplay events remain push-based over the same socket. The current server-driven events are `challenges`, `game_state_update`, `progress_update`, `penalty`, `attempt_result`, and `game_result`. The web app should treat WebSocket as the primary live channel and fall back to `GET /lobbies/{id}` or `GET /game-rooms/{id}` only when it needs a fresh snapshot after reconnect or an error response.
 
 ## Match Results And Rematch
 
