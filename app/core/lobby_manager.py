@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from typing import Any
 from uuid import uuid4
 
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
+from app.core.websocket_protocol import build_message
 from app.services.shortcut_engine import generate_shortcut_sequence, publicize_challenges
 from app.models.game_room import GameRoom, GameSessionStatus
 from app.models.lobby import Lobby, LobbyStatus
@@ -25,6 +27,42 @@ class LobbyManager:
 
     def _status_for_count(self, count: int, max_players: int) -> LobbyStatus:
         return LobbyStatus.FULL if count >= max_players else LobbyStatus.WAITING
+
+    async def _public_lobby_payload(self, lobby: Lobby) -> dict[str, Any]:
+        players: list[dict[str, str]] = []
+        for player_id in lobby.players:
+            player = await connection_manager.get_player(player_id)
+            display_name = player_id
+            if player is not None and player.display_name:
+                display_name = player.display_name
+            players.append({"player_id": player_id, "display_name": display_name})
+
+        return {
+            "id": lobby.id,
+            "players": players,
+            "status": lobby.status.value,
+        }
+
+    async def _broadcast_lobby_update(
+        self,
+        lobby: Lobby,
+        *,
+        change: str,
+        actor_player_id: str | None = None,
+    ) -> None:
+        await connection_manager.broadcast_to_scope(
+            "lobby",
+            lobby.id,
+            build_message(
+                "lobby_updated",
+                {
+                    "lobby_id": lobby.id,
+                    "lobby": await self._public_lobby_payload(lobby),
+                    "change": change,
+                    "actor_player_id": actor_player_id,
+                },
+            ),
+        )
 
     async def create_lobby(self, player_id: str) -> Lobby:
         """Create a lobby with `player_id` as the first member."""
@@ -53,6 +91,9 @@ class LobbyManager:
             status=PlayerStatus.LOBBY,
             current_room=created.id,
         )
+        await connection_manager.set_subscription(player_id, "lobby", created.id)
+        await connection_manager.clear_subscription(player_id, "room")
+        await self._broadcast_lobby_update(created, change="created", actor_player_id=player_id)
         return created
 
     async def join_lobby(self, lobby_id: str, player_id: str) -> Lobby:
@@ -72,6 +113,8 @@ class LobbyManager:
                 raise LookupError(msg)
 
             if player_id in lobby.players:
+                await connection_manager.set_subscription(player_id, "lobby", lobby.id)
+                await connection_manager.clear_subscription(player_id, "room")
                 return lobby
 
             if player.current_room is not None and player.current_room != lobby_id:
@@ -95,6 +138,9 @@ class LobbyManager:
             status=PlayerStatus.LOBBY,
             current_room=lobby_id,
         )
+        await connection_manager.set_subscription(player_id, "lobby", lobby_id)
+        await connection_manager.clear_subscription(player_id, "room")
+        await self._broadcast_lobby_update(updated, change="joined", actor_player_id=player_id)
         return updated
 
     async def leave_lobby(self, lobby_id: str, player_id: str) -> None:
@@ -125,6 +171,12 @@ class LobbyManager:
             status=PlayerStatus.IDLE,
             current_room=None,
         )
+        await connection_manager.clear_subscription(player_id, "lobby")
+        await connection_manager.clear_subscription(player_id, "room")
+
+        remaining_lobby = await self.get_lobby(lobby_id)
+        if remaining_lobby is not None:
+            await self._broadcast_lobby_update(remaining_lobby, change="left", actor_player_id=player_id)
 
     async def get_lobby(self, lobby_id: str) -> Lobby | None:
         """Return a lobby by id, or None if missing."""
@@ -208,30 +260,37 @@ class LobbyManager:
                 status=PlayerStatus.IN_GAME,
                 current_room=room.id,
             )
+            await connection_manager.set_subscription(pid, "room", room.id)
+            await connection_manager.clear_subscription(pid, "lobby")
 
         from app.core.game_engine import game_engine
 
         state = await game_engine.get_public_state(room)
         # send the same (public) challenge sequence to every player in the room
         public_challenges = publicize_challenges(room.game_state.get("challenges", []))
-        for pid in room.players:
-            await connection_manager.send_personal_message(
-                pid,
+        await connection_manager.broadcast_to_scope(
+            "room",
+            room.id,
+            build_message(
+                "challenges",
                 {
-                    "event": "challenges",
                     "room_id": room.id,
                     "challenges": public_challenges,
                 },
-            )
-            await connection_manager.send_personal_message(
-                pid,
+            ),
+        )
+        await connection_manager.broadcast_to_scope(
+            "room",
+            room.id,
+            build_message(
+                "game_state_update",
                 {
-                    "event": "game_state_update",
                     "room_id": room.id,
                     "state_version": state.state_version,
                     "game_state": state.model_dump(mode="json"),
                 },
-            )
+            ),
+        )
         return room
 
     async def create_rematch_lobby(
@@ -279,6 +338,8 @@ class LobbyManager:
                 if updated is None:
                     raise ValueError("rematch_roster_changed")
                 updated_players.append(player_id)
+                await connection_manager.set_subscription(player_id, "lobby", created.id)
+                await connection_manager.clear_subscription(player_id, "room")
         except Exception:
             async with self._lock:
                 self._lobbies.pop(created.id, None)
@@ -288,7 +349,11 @@ class LobbyManager:
                     status=PlayerStatus.IN_GAME,
                     current_room=source_room_id,
                 )
+                await connection_manager.set_subscription(player_id, "room", source_room_id)
+                await connection_manager.clear_subscription(player_id, "lobby")
             raise
+
+        await self._broadcast_lobby_update(created, change="rematch_created")
 
         return created
 
@@ -325,6 +390,8 @@ class LobbyManager:
                 status=PlayerStatus.IDLE,
                 current_room=None,
             )
+        await connection_manager.clear_subscription(player_id, "lobby")
+        await connection_manager.clear_subscription(player_id, "room")
 
     async def reset(self) -> None:
         """Clear all lobbies (used by tests)."""

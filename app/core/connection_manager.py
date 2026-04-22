@@ -19,6 +19,7 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: dict[str, WebSocket] = {}
         self._players: dict[str, Player] = {}
+        self._subscriptions: dict[str, dict[str, str]] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -49,11 +50,34 @@ class ConnectionManager:
             )
             return connection_id
 
+    async def set_subscription(self, connection_id: str, scope: str, scope_id: str) -> None:
+        """Attach a connection to a logical broadcast scope."""
+        async with self._lock:
+            if connection_id not in self._connections:
+                return
+            subscriptions = self._subscriptions.setdefault(connection_id, {})
+            subscriptions[scope] = scope_id
+
+    async def clear_subscription(self, connection_id: str, scope: str | None = None) -> None:
+        """Remove a subscription for a connection, or all subscriptions."""
+        async with self._lock:
+            if scope is None:
+                self._subscriptions.pop(connection_id, None)
+                return
+
+            subscriptions = self._subscriptions.get(connection_id)
+            if subscriptions is None:
+                return
+            subscriptions.pop(scope, None)
+            if not subscriptions:
+                self._subscriptions.pop(connection_id, None)
+
     async def disconnect(self, connection_id: str) -> None:
         """Remove a connection if present (idempotent)."""
         async with self._lock:
             self._connections.pop(connection_id, None)
             self._players.pop(connection_id, None)
+            self._subscriptions.pop(connection_id, None)
 
     async def get_player(self, player_id: str) -> Player | None:
         """Return the player for a connection id, if any."""
@@ -101,6 +125,35 @@ class ConnectionManager:
                 dead.append(connection_id)
         for connection_id in dead:
             await self.disconnect(connection_id)
+
+    async def broadcast_to_scope(
+        self,
+        scope: str,
+        scope_id: str,
+        message: str | dict[str, Any],
+    ) -> None:
+        """Send a message to all connections subscribed to a scope."""
+        async with self._lock:
+            snapshot = [
+                (connection_id, websocket)
+                for connection_id, websocket in self._connections.items()
+                if self._subscriptions.get(connection_id, {}).get(scope) == scope_id
+            ]
+        dead: list[str] = []
+        for connection_id, websocket in snapshot:
+            try:
+                await self._send(websocket, message)
+            except Exception:
+                dead.append(connection_id)
+        for connection_id in dead:
+            await self.disconnect(connection_id)
+
+    async def reset(self) -> None:
+        """Clear all connection state (used by tests)."""
+        async with self._lock:
+            self._connections.clear()
+            self._players.clear()
+            self._subscriptions.clear()
 
 
 connection_manager = ConnectionManager()

@@ -9,6 +9,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
+from app.core.websocket_protocol import build_error, build_message
 from app.models.game_room import (
     AttemptResponse,
     GameEndReason,
@@ -341,14 +342,16 @@ class GameEngine:
 
     def _result_event_locked(self, room: GameRoom) -> dict[str, Any]:
         gs = room.game_state
-        return {
-            "event": "game_result",
-            "room_id": room.id,
-            "winner_player_id": gs.get("winner_player_id"),
-            "draw": bool(gs.get("draw", False)),
-            "end_reason": gs.get("end_reason"),
-            "rankings": self._ranking_entries_locked(room),
-        }
+        return build_message(
+            "game_result",
+            {
+                "room_id": room.id,
+                "winner_player_id": gs.get("winner_player_id"),
+                "draw": bool(gs.get("draw", False)),
+                "end_reason": gs.get("end_reason"),
+                "rankings": self._ranking_entries_locked(room),
+            },
+        )
 
     def _rejected_response_locked(
         self,
@@ -372,23 +375,20 @@ class GameEngine:
             game_state=state,
         )
 
-    async def _broadcast_to_players(
-        self,
-        players: tuple[str, ...] | list[str],
-        payload: dict[str, Any],
-    ) -> None:
-        for pid in players:
-            await connection_manager.send_personal_message(pid, payload)
+    async def _broadcast_to_room(self, room: GameRoom, payload: dict[str, Any]) -> None:
+        await connection_manager.broadcast_to_scope("room", room.id, payload)
 
     async def _broadcast_state(self, room: GameRoom, state: GameStateView) -> None:
-        await self._broadcast_to_players(
-            room.players,
-            {
-                "event": "game_state_update",
-                "room_id": room.id,
-                "state_version": state.state_version,
-                "game_state": state.model_dump(mode="json"),
-            },
+        await self._broadcast_to_room(
+            room,
+            build_message(
+                "game_state_update",
+                {
+                    "room_id": room.id,
+                    "state_version": state.state_version,
+                    "game_state": state.model_dump(mode="json"),
+                },
+            ),
         )
 
     async def ensure_room_state(self, room_id: str) -> GameStateView | None:
@@ -410,7 +410,7 @@ class GameEngine:
         if timed_out:
             await self._broadcast_state(room, state)
             if result_event is not None:
-                await self._broadcast_to_players(room.players, result_event)
+                await self._broadcast_to_room(room, result_event)
         return state
 
     async def get_public_state(self, room: GameRoom) -> GameStateView:
@@ -664,20 +664,24 @@ class GameEngine:
                                 if state.finished:
                                     result_event = self._result_event_locked(room)
 
-                                progress_event = {
-                                    "event": "progress_update",
-                                    "room_id": room.id,
-                                    "player_id": player_id,
-                                    "index": int(progress.get("objective_index", 0)),
-                                    "score": int(progress.get("attempts_correct", 0)),
-                                    "correct": correct,
-                                }
-                                if not correct:
-                                    penalty_event = {
-                                        "event": "penalty",
-                                        "message": "incorrect_input",
+                                progress_event = build_message(
+                                    "progress_update",
+                                    {
+                                        "room_id": room.id,
+                                        "player_id": player_id,
+                                        "index": int(progress.get("objective_index", 0)),
                                         "score": int(progress.get("attempts_correct", 0)),
-                                    }
+                                        "correct": correct,
+                                    },
+                                )
+                                if not correct:
+                                    penalty_event = build_message(
+                                        "penalty",
+                                        {
+                                            "message": "incorrect_input",
+                                            "score": int(progress.get("attempts_correct", 0)),
+                                        },
+                                    )
 
                                 response = AttemptResponse(
                                     room_id=room_id,
@@ -705,11 +709,11 @@ class GameEngine:
         if penalty_event is not None:
             await connection_manager.send_personal_message(player_id, penalty_event)
         if progress_event is not None:
-            await self._broadcast_to_players(room.players, progress_event)
+            await self._broadcast_to_room(room, progress_event)
         if should_broadcast_state:
             await self._broadcast_state(room, response.game_state)
         if result_event is not None:
-            await self._broadcast_to_players(room.players, result_event)
+            await self._broadcast_to_room(room, result_event)
         return response
 
     async def resolve_forfeit(self, room_id: str, forfeiting_player_id: str) -> None:
@@ -730,10 +734,11 @@ class GameEngine:
             state = self._serialize_state_locked(room, now)
             result_event = self._result_event_locked(room)
             result_event["forfeit_player_id"] = forfeiting_player_id
+            result_event["payload"]["forfeit_player_id"] = forfeiting_player_id
 
         await self._broadcast_state(room, state)
         if result_event is not None:
-            await self._broadcast_to_players(room.players, result_event)
+            await self._broadcast_to_room(room, result_event)
 
     async def process_input(self, player_id: str, payload: dict[str, Any]) -> None:
         """Backward-compatible WebSocket input handler."""
@@ -741,7 +746,7 @@ class GameEngine:
         if not isinstance(keys, list):
             await connection_manager.send_personal_message(
                 player_id,
-                {"event": "error", "message": "invalid_input_format"},
+                build_error("invalid_input_format"),
             )
             return
 
@@ -749,7 +754,7 @@ class GameEngine:
         if player is None or player.current_room is None:
             await connection_manager.send_personal_message(
                 player_id,
-                {"event": "error", "message": "not_in_game"},
+                build_error("not_in_game"),
             )
             return
 
@@ -758,7 +763,7 @@ class GameEngine:
         if room is None:
             await connection_manager.send_personal_message(
                 player_id,
-                {"event": "error", "message": "room_not_found"},
+                build_error("room_not_found"),
             )
             return
 
@@ -790,15 +795,12 @@ class GameEngine:
         if not result.accepted and result.reason == "rate_limited":
             await connection_manager.send_personal_message(
                 player_id,
-                {"event": "spam_blocked", "message": "too_many_inputs"},
+                build_message("spam_blocked", {"message": "too_many_inputs"}),
             )
 
         await connection_manager.send_personal_message(
             player_id,
-            {
-                "event": "attempt_result",
-                **result.model_dump(mode="json"),
-            },
+            build_message("attempt_result", result.model_dump(mode="json")),
         )
 
 

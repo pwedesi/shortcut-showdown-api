@@ -50,6 +50,8 @@ class GameRoomManager:
         if removed_from is None:
             return
 
+        await connection_manager.clear_subscription(player_id, "room")
+
         from app.core.game_engine import game_engine
 
         await game_engine.resolve_forfeit(removed_from, player_id)
