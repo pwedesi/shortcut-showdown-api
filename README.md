@@ -45,7 +45,7 @@ Lobby payloads return resolved player entries in join order:
 
 ```json
 {
-  "id": "lobby-id",
+  "id": "K7M4QZ1",
   "players": [
     {"player_id": "player-a", "display_name": "OPERATOR_01"},
     {"player_id": "player-b", "display_name": "MAVERICK"}
@@ -65,7 +65,7 @@ The recommended realtime path is a versioned envelope with `v`, `type`, and `pay
   "v": 1,
   "type": "join_lobby",
   "payload": {
-    "lobby_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+    "lobby_id": "K7M4QZ1",
     "player_id": "player-a"
   }
 }
@@ -89,11 +89,11 @@ Lobby and room broadcasts use the same envelope:
   "v": 1,
   "type": "lobby_updated",
   "payload": {
-    "lobby_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+    "lobby_id": "K7M4QZ1",
     "change": "joined",
     "actor_player_id": "player-b",
     "lobby": {
-      "id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+      "id": "K7M4QZ1",
       "players": [
         {"player_id": "player-a", "display_name": "OPERATOR_01"},
         {"player_id": "player-b", "display_name": "MAVERICK"}

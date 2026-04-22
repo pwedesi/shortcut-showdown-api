@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from fastapi.testclient import TestClient
 
@@ -36,6 +37,7 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
             }
         ]
         assert body["status"] == "waiting"
+        assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", body["id"]) is not None
 
         async def check_player() -> None:
             p = await connection_manager.get_player(pid)

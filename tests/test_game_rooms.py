@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import re
 
 from fastapi.testclient import TestClient
 
@@ -30,6 +31,7 @@ def test_start_converts_lobby_to_game_room_and_locks() -> None:
             assert res.status_code == 200
             body = res.json()
             assert body["id"] == lobby_id
+            assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", body["id"]) is not None
             assert body["players"] == [p1, p2]
             assert body["locked"] is True
             # a shared sequence of shortcut challenges should be present
@@ -256,6 +258,7 @@ def test_rematch_creates_new_lobby_with_same_roster() -> None:
 
             assert body["room_id"] == lobby_id
             assert next_lobby_id != lobby_id
+            assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", next_lobby_id) is not None
 
             lobby = client.get(f"/lobbies/{next_lobby_id}")
             assert lobby.status_code == 200
