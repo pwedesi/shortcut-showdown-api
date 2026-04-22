@@ -145,7 +145,7 @@ class GameRoomView(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+                "id": "K7M4QZ1",
                 "players": ["player-a", "player-b"],
                 "locked": True,
                 "game_state": {
@@ -241,7 +241,7 @@ class MatchResultsView(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "room_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+                "room_id": "K7M4QZ1",
                 "you_player_id": "player-a",
                 "placements": [
                     {

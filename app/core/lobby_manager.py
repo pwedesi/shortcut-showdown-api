@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+import secrets
 import time
 from typing import Any
-from uuid import uuid4
 
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
@@ -18,6 +18,10 @@ from app.models.lobby import Lobby, LobbyStatus
 from app.models.player import PlayerStatus
 
 
+_LOBBY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+_LOBBY_CODE_LENGTH = 7
+
+
 class LobbyManager:
     """Tracks lobbies and keeps `Player` lobby fields in sync when possible."""
 
@@ -27,6 +31,18 @@ class LobbyManager:
 
     def _status_for_count(self, count: int, max_players: int) -> LobbyStatus:
         return LobbyStatus.FULL if count >= max_players else LobbyStatus.WAITING
+
+    async def _generate_lobby_id(self) -> str:
+        while True:
+            lobby_id = "".join(
+                secrets.choice(_LOBBY_CODE_ALPHABET)
+                for _ in range(_LOBBY_CODE_LENGTH)
+            )
+            if lobby_id in self._lobbies:
+                continue
+            if await game_room_manager.get_room(lobby_id) is not None:
+                continue
+            return lobby_id
 
     async def _public_lobby_payload(self, lobby: Lobby) -> dict[str, Any]:
         players: list[dict[str, str]] = []
@@ -78,7 +94,7 @@ class LobbyManager:
                 msg = "Player is already in a lobby"
                 raise ValueError(msg)
 
-            lobby_id = str(uuid4())
+            lobby_id = await self._generate_lobby_id()
             created = Lobby(
                 id=lobby_id,
                 players=(player_id,),
@@ -247,12 +263,11 @@ class LobbyManager:
                 locked=True,
             )
 
-        try:
-            await game_room_manager.register_room(room)
-        except Exception:
-            async with self._lock:
+            try:
+                await game_room_manager.register_room(room)
+            except Exception:
                 self._lobbies[lobby_id] = lobby
-            raise
+                raise
 
         for pid in room.players:
             await connection_manager.update_player(
@@ -319,7 +334,7 @@ class LobbyManager:
                     raise ValueError("rematch_roster_changed")
                 validated_players.append(player_id)
 
-            lobby_id = str(uuid4())
+            lobby_id = await self._generate_lobby_id()
             created = Lobby(
                 id=lobby_id,
                 players=tuple(validated_players),

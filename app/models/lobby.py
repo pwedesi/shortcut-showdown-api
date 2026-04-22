@@ -30,7 +30,7 @@ class LobbyView(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+                "id": "K7M4QZ1",
                 "players": [
                     {
                         "player_id": "player-a",
