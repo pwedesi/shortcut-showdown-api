@@ -140,7 +140,7 @@ def test_connect_creates_player() -> None:
         p = await manager.get_player(cid)
         assert p is not None
         assert p.id == cid
-        assert p.username == ""
+        assert p.display_name == ""
         assert p.status == PlayerStatus.IDLE
         assert p.current_room is None
 
@@ -165,12 +165,12 @@ def test_update_player_state() -> None:
         cid = await manager.connect(ws)
         updated = await manager.update_player(
             cid,
-            username="alice",
+            display_name="alice",
             status=PlayerStatus.LOBBY,
             current_room="room-1",
         )
         assert updated is not None
-        assert updated.username == "alice"
+        assert updated.display_name == "alice"
         assert updated.status == PlayerStatus.LOBBY
         assert updated.current_room == "room-1"
         again = await manager.get_player(cid)

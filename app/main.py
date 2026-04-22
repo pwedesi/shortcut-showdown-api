@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.api.game_rooms import router as game_rooms_router
 from app.api.lobbies import router as lobbies_router
+from app.api.players import router as players_router
 from app.api.ws import router as ws_router
 from app.core.config import get_settings
 
@@ -14,6 +15,7 @@ app = FastAPI(
 
 app.include_router(lobbies_router)
 app.include_router(game_rooms_router)
+app.include_router(players_router)
 app.include_router(ws_router)
 
 
