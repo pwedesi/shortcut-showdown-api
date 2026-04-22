@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.core.lobby_manager import lobby_manager
 
@@ -18,5 +19,6 @@ def clear_lobbies_after_test() -> None:
     async def _reset() -> None:
         await lobby_manager.reset()
         await game_room_manager.reset()
+        await connection_manager.reset()
 
     asyncio.run(_reset())

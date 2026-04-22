@@ -19,6 +19,15 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
         res = client.post("/lobbies", json={"player_id": pid})
         assert res.status_code == 201
         body = res.json()
+        update = ws.receive_json()
+        assert update["type"] == "lobby_updated"
+        assert update["lobby_id"] == body["id"]
+        assert update["lobby"]["players"] == [
+            {
+                "player_id": pid,
+                "display_name": pid,
+            }
+        ]
         assert "id" in body
         assert body["players"] == [
             {
@@ -47,12 +56,25 @@ def test_join_makes_full_and_get_lists_players() -> None:
             created = client.post("/lobbies", json={"player_id": p1})
             lobby_id = created.json()["id"]
 
+            created_update = ws1.receive_json()
+            assert created_update["type"] == "lobby_updated"
+            assert created_update["lobby"]["players"] == [
+                {"player_id": p1, "display_name": p1},
+            ]
+
             joined = client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
             assert joined.status_code == 200
             assert joined.json()["status"] == "full"
             assert [
                 player["player_id"] for player in joined.json()["players"]
             ] == [p1, p2]
+
+            update1 = ws1.receive_json()
+            update2 = ws2.receive_json()
+            assert update1["type"] == "lobby_updated"
+            assert update1["lobby"]["players"][1]["player_id"] == p2
+            assert update2["type"] == "lobby_updated"
+            assert update2["lobby"]["players"][1]["player_id"] == p2
 
             got = client.get(f"/lobbies/{lobby_id}")
             assert got.status_code == 200

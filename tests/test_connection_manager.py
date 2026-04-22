@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
@@ -115,6 +116,9 @@ def test_ws_endpoint_echo_integration() -> None:
     with client.websocket_connect("/ws") as ws:
         first = ws.receive_json()
         assert first["event"] == "connect"
+        assert first["type"] == "connect"
+        assert first["v"] == 1
+        assert first["payload"]["player_id"] == first["player_id"]
         assert "player_id" in first
         pid = first["player_id"]
         assert isinstance(pid, str) and len(pid) > 0
@@ -129,7 +133,38 @@ def test_ws_endpoint_echo_integration() -> None:
         ws.send_text("hello")
         second = ws.receive_json()
         assert second["event"] == "message"
+        assert second["type"] == "message"
+        assert second["payload"]["data"] == "hello"
         assert second["data"] == "hello"
+
+
+def test_websocket_join_lobby_returns_snapshot() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        pid = ws.receive_json()["player_id"]
+        lobby_id = client.post("/lobbies", json={"player_id": pid}).json()["id"]
+
+        # consume the lobby broadcast from the create call
+        ws.receive_json()
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "v": 1,
+                    "type": "join_lobby",
+                    "payload": {"lobby_id": lobby_id, "player_id": pid},
+                }
+            )
+        )
+
+        ack = ws.receive_json()
+        snapshot = ws.receive_json()
+        assert ack["type"] == "subscription_ack"
+        assert snapshot["type"] == "lobby_snapshot"
+        assert snapshot["lobby_id"] == lobby_id
+        assert snapshot["lobby"]["players"] == [
+            {"player_id": pid, "display_name": pid},
+        ]
 
 
 def test_connect_creates_player() -> None:

@@ -18,9 +18,11 @@ def test_correct_input_advances_player() -> None:
         lobby_id = client.post("/lobbies", json={"player_id": pid}).json()["id"]
         client.post(f"/lobbies/{lobby_id}/start", json={"player_id": pid})
 
-        # receive challenges event
-        msg = ws.receive_json()
-        assert msg["event"] == "challenges"
+        # skip lobby updates and receive the first gameplay event
+        while True:
+            msg = ws.receive_json()
+            if msg["event"] == "challenges":
+                break
 
         room = asyncio.run(game_room_manager.get_room(lobby_id))
         expected = room.game_state["challenges"][0]["expectedKeys"]
@@ -44,9 +46,11 @@ def test_incorrect_input_penalized() -> None:
         lobby_id = client.post("/lobbies", json={"player_id": pid}).json()["id"]
         client.post(f"/lobbies/{lobby_id}/start", json={"player_id": pid})
 
-        # receive challenges event
-        msg = ws.receive_json()
-        assert msg["event"] == "challenges"
+        # skip lobby updates and receive the first gameplay event
+        while True:
+            msg = ws.receive_json()
+            if msg["event"] == "challenges":
+                break
 
         # send wrong input
         ws.send_text(json.dumps({"event": "input", "keys": ["wrong"]}))
