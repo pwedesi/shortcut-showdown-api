@@ -6,6 +6,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.player import PlayerIdentityView
+
 
 class LobbyStatus(StrEnum):
     WAITING = "waiting"
@@ -20,3 +22,30 @@ class Lobby(BaseModel):
     id: str
     players: tuple[str, ...] = Field(default_factory=tuple)
     status: LobbyStatus = LobbyStatus.WAITING
+
+
+class LobbyView(BaseModel):
+    """Public lobby payload with resolved player identities."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+                "players": [
+                    {
+                        "player_id": "player-a",
+                        "display_name": "OPERATOR_01",
+                    },
+                    {
+                        "player_id": "player-b",
+                        "display_name": "MAVERICK",
+                    },
+                ],
+                "status": "waiting",
+            }
+        }
+    )
+
+    id: str
+    players: list[PlayerIdentityView] = Field(default_factory=list)
+    status: LobbyStatus

@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.game_rooms import game_room_to_response
+from app.core.connection_manager import connection_manager
 from app.core.lobby_manager import lobby_manager
 from app.models.game_room import GameRoomView
-from app.models.lobby import Lobby
+from app.models.lobby import Lobby, LobbyView
+from app.models.player import PlayerIdentityView
 
 router = APIRouter(prefix="/lobbies", tags=["lobbies"])
 
@@ -19,16 +21,29 @@ class PlayerIdBody(BaseModel):
     player_id: str
 
 
-def _lobby_to_response(lobby: Lobby) -> dict[str, object]:
-    return {
-        "id": lobby.id,
-        "players": list(lobby.players),
-        "status": lobby.status.value,
-    }
+async def _lobby_to_response(lobby: Lobby) -> LobbyView:
+    players: list[PlayerIdentityView] = []
+    for player_id in lobby.players:
+        player = await connection_manager.get_player(player_id)
+        display_name = player_id
+        if player is not None and player.display_name:
+            display_name = player.display_name
+        players.append(
+            PlayerIdentityView(
+                player_id=player_id,
+                display_name=display_name,
+            )
+        )
+
+    return LobbyView(
+        id=lobby.id,
+        players=players,
+        status=lobby.status,
+    )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def create_lobby(body: PlayerIdBody) -> dict[str, object]:
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=LobbyView)
+async def create_lobby(body: PlayerIdBody) -> LobbyView:
     """Create a new lobby; the player becomes the host and first member."""
     try:
         lobby = await lobby_manager.create_lobby(body.player_id)
@@ -42,11 +57,11 @@ async def create_lobby(body: PlayerIdBody) -> dict[str, object]:
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-    return _lobby_to_response(lobby)
+    return await _lobby_to_response(lobby)
 
 
-@router.post("/{lobby_id}/join")
-async def join_lobby(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
+@router.post("/{lobby_id}/join", response_model=LobbyView)
+async def join_lobby(lobby_id: str, body: PlayerIdBody) -> LobbyView:
     """Join an existing lobby when it is not full."""
     try:
         lobby = await lobby_manager.join_lobby(lobby_id, body.player_id)
@@ -60,7 +75,7 @@ async def join_lobby(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
-    return _lobby_to_response(lobby)
+    return await _lobby_to_response(lobby)
 
 
 @router.post("/{lobby_id}/start")
@@ -98,8 +113,8 @@ async def leave_lobby(lobby_id: str, body: PlayerIdBody) -> None:
         ) from exc
 
 
-@router.get("/{lobby_id}")
-async def get_lobby(lobby_id: str) -> dict[str, object]:
+@router.get("/{lobby_id}", response_model=LobbyView)
+async def get_lobby(lobby_id: str) -> LobbyView:
     """Return lobby details including the ordered player list."""
     lobby = await lobby_manager.get_lobby(lobby_id)
     if lobby is None:
@@ -107,4 +122,4 @@ async def get_lobby(lobby_id: str) -> dict[str, object]:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lobby not found",
         )
-    return _lobby_to_response(lobby)
+    return await _lobby_to_response(lobby)

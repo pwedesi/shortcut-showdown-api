@@ -20,7 +20,12 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
         assert res.status_code == 201
         body = res.json()
         assert "id" in body
-        assert body["players"] == [pid]
+        assert body["players"] == [
+            {
+                "player_id": pid,
+                "display_name": pid,
+            }
+        ]
         assert body["status"] == "waiting"
 
         async def check_player() -> None:
@@ -45,11 +50,13 @@ def test_join_makes_full_and_get_lists_players() -> None:
             joined = client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
             assert joined.status_code == 200
             assert joined.json()["status"] == "full"
-            assert joined.json()["players"] == [p1, p2]
+            assert [
+                player["player_id"] for player in joined.json()["players"]
+            ] == [p1, p2]
 
             got = client.get(f"/lobbies/{lobby_id}")
             assert got.status_code == 200
-            assert got.json()["players"] == [p1, p2]
+            assert [player["player_id"] for player in got.json()["players"]] == [p1, p2]
 
 
 def test_join_when_full_returns_409() -> None:
