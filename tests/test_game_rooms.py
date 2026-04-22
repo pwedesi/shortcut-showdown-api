@@ -153,6 +153,180 @@ def test_game_state_contract_has_authoritative_fields() -> None:
         assert "streak" in progress
 
 
+def test_finished_match_results_include_podium_and_display_names() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws1:
+        p1 = ws1.receive_json()["player_id"]
+        with client.websocket_connect("/ws") as ws2:
+            p2 = ws2.receive_json()["player_id"]
+
+            client.patch(
+                f"/players/{p1}",
+                json={"display_name": "OPERATOR_01"},
+            )
+            client.patch(
+                f"/players/{p2}",
+                json={"display_name": "MAVERICK"},
+            )
+
+            lobby_id = client.post("/lobbies", json={"player_id": p1}).json()["id"]
+            client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
+            client.post(f"/lobbies/{lobby_id}/start", json={"player_id": p1})
+
+            async def shrink() -> None:
+                room = await game_room_manager.get_room(lobby_id)
+                assert room is not None
+                room.game_state["challenges"] = room.game_state["challenges"][:1]
+
+            asyncio.run(shrink())
+            room = asyncio.run(game_room_manager.get_room(lobby_id))
+            assert room is not None
+            expected = room.game_state["challenges"][0]["expectedKeys"]
+
+            result = client.post(
+                f"/game-rooms/{lobby_id}/attempts",
+                json={
+                    "player_id": p1,
+                    "objective_index": 0,
+                    "keys": expected,
+                    "attempt_id": "finish-match-results",
+                },
+            )
+            assert result.status_code == 200
+            assert result.json()["game_state"]["status"] == "finished"
+
+            got = client.get(f"/game-rooms/{lobby_id}/results", params={"player_id": p1})
+            assert got.status_code == 200
+            body = got.json()
+
+            assert body["room_id"] == lobby_id
+            assert body["you_player_id"] == p1
+            assert body["finished"] is True
+            assert body["end_reason"] == "goal"
+            assert body["ended_at"] is not None
+            assert [entry["player_id"] for entry in body["placements"]] == [
+                p1,
+                p2,
+            ]
+            assert [entry["place"] for entry in body["placements"]] == [1, 2]
+            assert body["placements"][0]["display_name"] == "OPERATOR_01"
+            assert body["placements"][1]["display_name"] == "MAVERICK"
+
+
+def test_rematch_creates_new_lobby_with_same_roster() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws1:
+        p1 = ws1.receive_json()["player_id"]
+        with client.websocket_connect("/ws") as ws2:
+            p2 = ws2.receive_json()["player_id"]
+
+            lobby_id = client.post("/lobbies", json={"player_id": p1}).json()["id"]
+            client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
+            client.post(f"/lobbies/{lobby_id}/start", json={"player_id": p1})
+
+            async def shrink() -> None:
+                room = await game_room_manager.get_room(lobby_id)
+                assert room is not None
+                room.game_state["challenges"] = room.game_state["challenges"][:1]
+
+            asyncio.run(shrink())
+            room = asyncio.run(game_room_manager.get_room(lobby_id))
+            assert room is not None
+            expected = room.game_state["challenges"][0]["expectedKeys"]
+
+            result = client.post(
+                f"/game-rooms/{lobby_id}/attempts",
+                json={
+                    "player_id": p1,
+                    "objective_index": 0,
+                    "keys": expected,
+                    "attempt_id": "finish-match-rematch",
+                },
+            )
+            assert result.status_code == 200
+            assert result.json()["game_state"]["status"] == "finished"
+
+            rematch = client.post(
+                f"/game-rooms/{lobby_id}/rematch",
+                json={"player_id": p1},
+            )
+            assert rematch.status_code == 201
+            body = rematch.json()
+            next_lobby_id = body["next_lobby_id"]
+
+            assert body["room_id"] == lobby_id
+            assert next_lobby_id != lobby_id
+
+            lobby = client.get(f"/lobbies/{next_lobby_id}")
+            assert lobby.status_code == 200
+            lobby_body = lobby.json()
+            assert lobby_body["status"] == "full"
+            assert [player["player_id"] for player in lobby_body["players"]] == [
+                p1,
+                p2,
+            ]
+
+            async def check_players() -> None:
+                first = await connection_manager.get_player(p1)
+                second = await connection_manager.get_player(p2)
+                assert first is not None
+                assert second is not None
+                assert first.status == PlayerStatus.LOBBY
+                assert second.status == PlayerStatus.LOBBY
+                assert first.current_room == next_lobby_id
+                assert second.current_room == next_lobby_id
+
+            asyncio.run(check_players())
+
+
+def test_rematch_rejects_after_player_disconnect_and_results_remain_available() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws1:
+        p1 = ws1.receive_json()["player_id"]
+        with client.websocket_connect("/ws") as ws2:
+            p2 = ws2.receive_json()["player_id"]
+
+            lobby_id = client.post("/lobbies", json={"player_id": p1}).json()["id"]
+            client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
+            client.post(f"/lobbies/{lobby_id}/start", json={"player_id": p1})
+
+            async def shrink() -> None:
+                room = await game_room_manager.get_room(lobby_id)
+                assert room is not None
+                room.game_state["challenges"] = room.game_state["challenges"][:1]
+
+            asyncio.run(shrink())
+            room = asyncio.run(game_room_manager.get_room(lobby_id))
+            assert room is not None
+            expected = room.game_state["challenges"][0]["expectedKeys"]
+
+            result = client.post(
+                f"/game-rooms/{lobby_id}/attempts",
+                json={
+                    "player_id": p1,
+                    "objective_index": 0,
+                    "keys": expected,
+                    "attempt_id": "finish-and-disconnect",
+                },
+            )
+            assert result.status_code == 200
+            assert result.json()["game_state"]["status"] == "finished"
+
+        rematch = client.post(
+            f"/game-rooms/{lobby_id}/rematch",
+            json={"player_id": p1},
+        )
+        assert rematch.status_code == 409
+        assert rematch.json()["detail"] == "rematch_roster_changed"
+
+        results = client.get(f"/game-rooms/{lobby_id}/results", params={"player_id": p1})
+        assert results.status_code == 200
+        assert [entry["player_id"] for entry in results.json()["placements"]] == [
+            p1,
+            p2,
+        ]
+
+
 def test_rest_attempt_write_path_is_authoritative_and_idempotent() -> None:
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws:

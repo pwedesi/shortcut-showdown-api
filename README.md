@@ -6,7 +6,9 @@ Backend service for **Shortcut Showdown**, built with [FastAPI](https://fastapi.
 
 - **REST** — `GET /` returns a JSON status payload confirming the API is up.
 - **Authoritative game sessions** — `GET /game-rooms/{room_id}` returns server-owned round state (`running`/`finished`), synchronized timer fields, per-player telemetry, and end-of-round resolution.
+- **Match results** — `GET /game-rooms/{room_id}/results?player_id=...` returns a stable final podium with ordered placements, telemetry, winner/draw metadata, and the end reason/time for finished matches.
 - **Authoritative player actions** — `POST /game-rooms/{room_id}/attempts` validates attempts server-side and updates room state deterministically.
+- **Rematch flow** — `POST /game-rooms/{room_id}/rematch` creates a fresh lobby for the same live roster once the match is finished, so the next round can start without manual re-join.
 - **Authoritative player identity** — `PATCH /players/{player_id}` stores a server-known callsign for an active WebSocket player, and lobby responses return resolved player identities instead of bare ids.
 - **WebSockets** — `WS /ws` accepts connections, assigns a `player_id`, and echoes text messages with structured JSON events (`connect`, `message`).
 
@@ -53,6 +55,37 @@ Lobby payloads return resolved player entries in join order:
 ```
 
 If a player has not set a display name yet, the API falls back to their `player_id` in lobby responses.
+
+## Match Results And Rematch
+
+Once a room finishes, clients can fetch the final leaderboard with:
+
+```http
+GET /game-rooms/{room_id}/results?player_id={your-player-id}
+```
+
+The results payload includes:
+- The room id for the match
+- `you_player_id` so the UI can highlight the current player
+- Ordered `placements[]` with `player_id`, `display_name`, `place`, WPM, accuracy, progress, attempts, and finish metadata
+- `end_reason`, `ended_at`, `winner_player_id`, and `draw`
+
+Ranking is deterministic. The server orders placements by highest objective index, then highest accuracy, then highest WPM, then lexicographically smallest player id. Ties are therefore stable and reproducible.
+
+Rematch creates a new lobby with the same roster:
+
+```http
+POST /game-rooms/{room_id}/rematch
+{
+  "player_id": "player-a"
+}
+```
+
+Rules:
+- The rematch request only succeeds once the match is finished.
+- The current live roster must still match the finished match roster.
+- If a player disconnects or leaves before rematch, the server rejects the request so the app does not start a partial rematch.
+- The response returns the next lobby id so the client can route to `/lobby?id=...`.
 
 Configuration (host, port, environment) is driven by environment variables and an optional `.env` file. See `.env.example` for supported keys.
 
