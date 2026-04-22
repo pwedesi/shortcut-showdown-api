@@ -199,6 +199,99 @@ class GameRoomView(BaseModel):
     locked: bool = True
 
 
+class MatchPlacementView(BaseModel):
+    """Final podium entry for a completed match."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "player_id": "player-a",
+                "display_name": "OPERATOR_01",
+                "place": 1,
+                "objective_index": 10,
+                "progress_percent": 100.0,
+                "wpm": 52.4,
+                "accuracy": 95.0,
+                "streak": 4,
+                "attempts_total": 11,
+                "attempts_correct": 10,
+                "finished": True,
+                "finished_at": 1713806452.5,
+            }
+        }
+    )
+
+    player_id: str
+    display_name: str
+    place: int
+    objective_index: int
+    progress_percent: float
+    wpm: float
+    accuracy: float
+    streak: int
+    attempts_total: int
+    attempts_correct: int
+    finished: bool
+    finished_at: float | None = None
+
+
+class MatchResultsView(BaseModel):
+    """Final results payload for a finished match."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "room_id": "6f7f7f8f-47c2-4f0f-9ea1-063177f57ed0",
+                "you_player_id": "player-a",
+                "placements": [
+                    {
+                        "player_id": "player-a",
+                        "display_name": "OPERATOR_01",
+                        "place": 1,
+                        "objective_index": 10,
+                        "progress_percent": 100.0,
+                        "wpm": 52.4,
+                        "accuracy": 95.0,
+                        "streak": 4,
+                        "attempts_total": 11,
+                        "attempts_correct": 10,
+                        "finished": True,
+                        "finished_at": 1713806452.5,
+                    },
+                    {
+                        "player_id": "player-b",
+                        "display_name": "MAVERICK",
+                        "place": 2,
+                        "objective_index": 7,
+                        "progress_percent": 70.0,
+                        "wpm": 38.1,
+                        "accuracy": 88.9,
+                        "streak": 2,
+                        "attempts_total": 9,
+                        "attempts_correct": 8,
+                        "finished": False,
+                        "finished_at": None,
+                    },
+                ],
+                "winner_player_id": "player-a",
+                "draw": False,
+                "end_reason": "goal",
+                "ended_at": 1713806452.5,
+                "finished": True,
+            }
+        }
+    )
+
+    room_id: str
+    you_player_id: str | None = None
+    placements: list[MatchPlacementView] = Field(default_factory=list)
+    winner_player_id: str | None = None
+    draw: bool = False
+    end_reason: GameEndReason | None = None
+    ended_at: float | None = None
+    finished: bool = True
+
+
 class AttemptRequest(BaseModel):
     """Authoritative write payload for shortcut attempts."""
 

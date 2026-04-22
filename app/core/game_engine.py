@@ -15,6 +15,8 @@ from app.models.game_room import (
     GameRoom,
     GameSessionStatus,
     GameStateView,
+    MatchPlacementView,
+    MatchResultsView,
     PlayerGameProgress,
 )
 from app.services.shortcut_engine import publicize_challenges
@@ -82,6 +84,77 @@ class GameEngine:
         count = len(challenges) if isinstance(challenges, list) else 0
         gs["objective_count"] = count
         return count
+
+    @staticmethod
+    def _match_roster_locked(room: GameRoom) -> tuple[str, ...]:
+        roster = room.game_state.get("roster")
+        if isinstance(roster, (list, tuple)):
+            return tuple(str(player_id) for player_id in roster if str(player_id))
+        return room.players
+
+    def _result_rankings_locked(
+        self,
+        room: GameRoom,
+        player_ids: tuple[str, ...],
+        ended_at: float,
+    ) -> list[dict[str, Any]]:
+        gs = room.game_state
+        challenge_count = self._challenge_count(gs)
+        round_started_at = float(gs.get("round_started_at", ended_at))
+        display_names = gs.get("player_display_names", {})
+        if not isinstance(display_names, dict):
+            display_names = {}
+
+        rankings: list[dict[str, Any]] = []
+        for pid in player_ids:
+            progress = self._ensure_player_progress(gs, pid)
+            objective_index = max(0, int(progress.get("objective_index", 0)))
+            attempts_total = max(0, int(progress.get("attempts_total", 0)))
+            attempts_correct = max(0, int(progress.get("attempts_correct", 0)))
+            finished_at = progress.get("finished_at")
+            metric_time = float(finished_at) if finished_at is not None else ended_at
+            elapsed = max(0.0, metric_time - round_started_at)
+            if challenge_count <= 0:
+                progress_percent = 100.0
+            else:
+                progress_percent = min(
+                    100.0,
+                    (objective_index / challenge_count) * 100.0,
+                )
+            if elapsed <= 0:
+                wpm = 0.0
+            else:
+                wpm = objective_index / (elapsed / 60.0)
+
+            rankings.append(
+                {
+                    "player_id": pid,
+                    "display_name": display_names.get(pid, pid),
+                    "objective_index": objective_index,
+                    "progress_percent": progress_percent,
+                    "wpm": wpm,
+                    "accuracy": (
+                        (attempts_correct / attempts_total) * 100.0
+                        if attempts_total > 0
+                        else 0.0
+                    ),
+                    "streak": int(progress.get("streak", 0)),
+                    "attempts_total": attempts_total,
+                    "attempts_correct": attempts_correct,
+                    "finished": bool(progress.get("finished", False)),
+                    "finished_at": finished_at,
+                }
+            )
+
+        rankings.sort(
+            key=lambda item: (
+                -int(item.get("objective_index", 0)),
+                -float(item.get("accuracy", 0.0)),
+                -float(item.get("wpm", 0.0)),
+                str(item.get("player_id", "")),
+            )
+        )
+        return rankings
 
     def _recompute_metrics(
         self,
@@ -349,6 +422,78 @@ class GameEngine:
         now = time.time()
         async with self._lock:
             return self._serialize_state_locked(room, now)
+
+    async def get_match_results(
+        self,
+        room_id: str,
+        viewer_player_id: str | None = None,
+    ) -> MatchResultsView:
+        """Return the final podium and telemetry for a finished match."""
+        state = await self.ensure_room_state(room_id)
+        if state is None:
+            raise LookupError("Game room not found")
+        if not state.finished:
+            raise ValueError("match_not_finished")
+
+        room = await game_room_manager.get_room(room_id)
+        if room is None:
+            raise LookupError("Game room not found")
+
+        ended_at = state.finished_at if state.finished_at is not None else time.time()
+        async with self._lock:
+            roster = self._match_roster_locked(room)
+            rankings = self._result_rankings_locked(room, roster, ended_at)
+
+        current_players = await asyncio.gather(
+            *(connection_manager.get_player(pid) for pid in roster)
+        ) if roster else []
+        current_by_id = {
+            pid: player for pid, player in zip(roster, current_players)
+        }
+
+        placements: list[MatchPlacementView] = []
+        for place, item in enumerate(rankings, start=1):
+            pid = str(item["player_id"])
+            player = current_by_id.get(pid)
+            display_name = pid
+            if player is not None and player.display_name:
+                display_name = player.display_name
+            else:
+                snapshot_name = item.get("display_name")
+                if isinstance(snapshot_name, str) and snapshot_name:
+                    display_name = snapshot_name
+
+            placements.append(
+                MatchPlacementView(
+                    player_id=pid,
+                    display_name=display_name,
+                    place=place,
+                    objective_index=int(item.get("objective_index", 0)),
+                    progress_percent=float(item.get("progress_percent", 0.0)),
+                    wpm=float(item.get("wpm", 0.0)),
+                    accuracy=float(item.get("accuracy", 0.0)),
+                    streak=int(item.get("streak", 0)),
+                    attempts_total=int(item.get("attempts_total", 0)),
+                    attempts_correct=int(item.get("attempts_correct", 0)),
+                    finished=bool(item.get("finished", False)),
+                    finished_at=(
+                        float(item.get("finished_at"))
+                        if item.get("finished_at") is not None
+                        else None
+                    ),
+                )
+            )
+
+        return MatchResultsView(
+            room_id=room.id,
+            you_player_id=viewer_player_id,
+            placements=placements,
+            winner_player_id=state.winner_player_id,
+            draw=state.draw,
+            end_reason=state.end_reason,
+            ended_at=state.finished_at,
+            finished=True,
+        )
 
     async def submit_attempt(
         self,

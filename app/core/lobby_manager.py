@@ -152,6 +152,13 @@ class LobbyManager:
             now = time.time()
             round_duration = max(1, int(getattr(settings, "round_duration_seconds", 90)))
 
+            player_display_names: dict[str, str] = {}
+            for pid in lobby.players:
+                player = await connection_manager.get_player(pid)
+                player_display_names[pid] = (
+                    player.display_name if player is not None and player.display_name else pid
+                )
+
             room = GameRoom(
                 id=lobby_id,
                 players=lobby.players,
@@ -162,6 +169,8 @@ class LobbyManager:
                     "round_ends_at": now + round_duration,
                     "objective_count": len(challenges),
                     "challenges": challenges,
+                    "roster": list(lobby.players),
+                    "player_display_names": player_display_names,
                     "progress": {
                         pid: {
                             "objective_index": 0,
@@ -224,6 +233,64 @@ class LobbyManager:
                 },
             )
         return room
+
+    async def create_rematch_lobby(
+        self,
+        player_ids: tuple[str, ...],
+        source_room_id: str,
+    ) -> Lobby:
+        """Create a new lobby for a completed match using the same roster."""
+        settings = get_settings()
+        max_players = settings.lobby_max_players
+
+        if not player_ids:
+            raise ValueError("rematch_roster_empty")
+        if len(set(player_ids)) != len(player_ids):
+            raise ValueError("rematch_roster_changed")
+        if len(player_ids) > max_players:
+            raise ValueError("rematch_roster_changed")
+
+        async with self._lock:
+            validated_players: list[str] = []
+            for player_id in player_ids:
+                player = await connection_manager.get_player(player_id)
+                if player is None:
+                    raise ValueError("rematch_roster_changed")
+                if player.current_room != source_room_id:
+                    raise ValueError("rematch_roster_changed")
+                validated_players.append(player_id)
+
+            lobby_id = str(uuid4())
+            created = Lobby(
+                id=lobby_id,
+                players=tuple(validated_players),
+                status=self._status_for_count(len(validated_players), max_players),
+            )
+            self._lobbies[lobby_id] = created
+
+        updated_players: list[str] = []
+        try:
+            for player_id in validated_players:
+                updated = await connection_manager.update_player(
+                    player_id,
+                    status=PlayerStatus.LOBBY,
+                    current_room=created.id,
+                )
+                if updated is None:
+                    raise ValueError("rematch_roster_changed")
+                updated_players.append(player_id)
+        except Exception:
+            async with self._lock:
+                self._lobbies.pop(created.id, None)
+            for player_id in updated_players:
+                await connection_manager.update_player(
+                    player_id,
+                    status=PlayerStatus.IN_GAME,
+                    current_room=source_room_id,
+                )
+            raise
+
+        return created
 
     async def remove_player_from_all_lobbies(self, player_id: str) -> None:
         """Remove the player from any lobby (disconnect). Deletes empty lobbies."""
