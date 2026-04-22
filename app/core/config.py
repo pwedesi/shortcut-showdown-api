@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     lobby_max_players: int = 2
     challenge_count: int = 10
+    round_duration_seconds: int = 90
+    max_attempts_per_second: int = 8
 
 
 @lru_cache

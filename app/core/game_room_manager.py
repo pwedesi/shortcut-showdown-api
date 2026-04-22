@@ -49,6 +49,11 @@ class GameRoomManager:
 
         if removed_from is None:
             return
+
+        from app.core.game_engine import game_engine
+
+        await game_engine.resolve_forfeit(removed_from, player_id)
+
         player = await connection_manager.get_player(player_id)
         if player is None:
             return

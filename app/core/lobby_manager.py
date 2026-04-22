@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import random
+import time
 from uuid import uuid4
 
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.services.shortcut_engine import generate_shortcut_sequence, publicize_challenges
-from app.models.game_room import GameRoom
+from app.models.game_room import GameRoom, GameSessionStatus
 from app.models.lobby import Lobby, LobbyStatus
 from app.models.player import PlayerStatus
 
@@ -145,20 +147,41 @@ class LobbyManager:
             # generate a shared challenge sequence for the room
             settings = get_settings()
             count = getattr(settings, "challenge_count", 10)
-            challenges = generate_shortcut_sequence(count)
+            rng = random.Random(lobby_id)
+            challenges = generate_shortcut_sequence(count, rng=rng)
+            now = time.time()
+            round_duration = max(1, int(getattr(settings, "round_duration_seconds", 90)))
 
             room = GameRoom(
                 id=lobby_id,
                 players=lobby.players,
                 game_state={
+                    "status": GameSessionStatus.RUNNING.value,
+                    "state_version": 1,
+                    "round_started_at": now,
+                    "round_ends_at": now + round_duration,
+                    "objective_count": len(challenges),
                     "challenges": challenges,
                     "progress": {
-                        pid: {"index": 0, "score": 0, "finished": False}
+                        pid: {
+                            "objective_index": 0,
+                            "progress_percent": 0.0,
+                            "wpm": 0.0,
+                            "accuracy": 0.0,
+                            "streak": 0,
+                            "attempts_total": 0,
+                            "attempts_correct": 0,
+                            "finished": False,
+                            "finished_at": None,
+                        }
                         for pid in lobby.players
                     },
                     "rate_limit": {},
-                    "finished_order": [],
-                    "finish_times": {},
+                    "attempt_receipts": {},
+                    "winner_player_id": None,
+                    "draw": False,
+                    "end_reason": None,
+                    "finished_at": None,
                 },
                 locked=True,
             )
@@ -176,6 +199,10 @@ class LobbyManager:
                 status=PlayerStatus.IN_GAME,
                 current_room=room.id,
             )
+
+        from app.core.game_engine import game_engine
+
+        state = await game_engine.get_public_state(room)
         # send the same (public) challenge sequence to every player in the room
         public_challenges = publicize_challenges(room.game_state.get("challenges", []))
         for pid in room.players:
@@ -185,6 +212,15 @@ class LobbyManager:
                     "event": "challenges",
                     "room_id": room.id,
                     "challenges": public_challenges,
+                },
+            )
+            await connection_manager.send_personal_message(
+                pid,
+                {
+                    "event": "game_state_update",
+                    "room_id": room.id,
+                    "state_version": state.state_version,
+                    "game_state": state.model_dump(mode="json"),
                 },
             )
         return room
