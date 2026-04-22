@@ -5,7 +5,14 @@ Backend service for **Shortcut Showdown**, built with [FastAPI](https://fastapi.
 ## Features
 
 - **REST** — `GET /` returns a JSON status payload confirming the API is up.
+- **Authoritative game sessions** — `GET /game-rooms/{room_id}` returns server-owned round state (`running`/`finished`), synchronized timer fields, per-player telemetry, and end-of-round resolution.
+- **Authoritative player actions** — `POST /game-rooms/{room_id}/attempts` validates attempts server-side and updates room state deterministically.
 - **WebSockets** — `WS /ws` accepts connections, assigns a `player_id`, and echoes text messages with structured JSON events (`connect`, `message`).
+
+Gameplay determinism notes:
+- Challenge RNG is server-side and seeded by room id, so all players in a room receive the same objective sequence.
+- Timeout/forfeit tie-breaking order is deterministic: highest objective index, then highest accuracy, then highest WPM, then lexicographically smallest player id.
+- Bots/AI players are not implemented.
 
 Configuration (host, port, environment) is driven by environment variables and an optional `.env` file. See `.env.example` for supported keys.
 
