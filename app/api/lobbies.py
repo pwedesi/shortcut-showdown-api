@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.api.game_rooms import game_room_to_response
 from app.core.lobby_manager import lobby_manager
+from app.models.game_room import GameRoomView
 from app.models.lobby import Lobby
 
 router = APIRouter(prefix="/lobbies", tags=["lobbies"])
@@ -63,7 +64,7 @@ async def join_lobby(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
 
 
 @router.post("/{lobby_id}/start")
-async def start_game(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
+async def start_game(lobby_id: str, body: PlayerIdBody) -> GameRoomView:
     """Start a match: lobby becomes a locked game room; players enter gameplay."""
     try:
         room = await lobby_manager.start_game(lobby_id, body.player_id)
@@ -77,7 +78,7 @@ async def start_game(lobby_id: str, body: PlayerIdBody) -> dict[str, object]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return game_room_to_response(room)
+    return await game_room_to_response(room)
 
 
 @router.post("/{lobby_id}/leave", status_code=status.HTTP_204_NO_CONTENT)
