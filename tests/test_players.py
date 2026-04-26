@@ -5,11 +5,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.main import app
 from app.models.player import DISPLAY_NAME_MAX_LENGTH
 
 
-def _players_by_id(players: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+def _players_by_id(
+    players: list[dict[str, str | bool]],
+) -> dict[str, dict[str, str | bool]]:
     return {player["player_id"]: player for player in players}
 
 
@@ -44,6 +47,8 @@ def test_set_display_name_is_returned_in_lobby_payload() -> None:
             roster = _players_by_id(got.json()["players"])
             assert roster[p1]["display_name"] == "OPERATOR_01"
             assert roster[p2]["display_name"] == "MAVERICK"
+            assert roster[p1]["is_leader"] is True
+            assert roster[p2]["is_leader"] is False
 
 
 @pytest.mark.parametrize(
@@ -115,9 +120,15 @@ def test_display_name_can_change_mid_lobby() -> None:
 
         got = client.get(f"/lobbies/{lobby_id}")
         assert got.status_code == 200
-        assert got.json()["players"] == [
+        s = get_settings()
+        g = got.json()
+        assert g["players"] == [
             {
                 "player_id": pid,
                 "display_name": "VETERAN",
+                "is_leader": True,
             }
         ]
+        assert g["challenge_count"] == s.challenge_count
+        assert g["round_duration_seconds"] == s.round_duration_seconds
+        assert g["max_attempts_per_second"] == s.max_attempts_per_second

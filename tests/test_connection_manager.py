@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.core.connection_manager import ConnectionManager, connection_manager
 from app.main import app
 from app.models.player import PlayerStatus
@@ -162,9 +163,15 @@ def test_websocket_join_lobby_returns_snapshot() -> None:
         assert ack["type"] == "subscription_ack"
         assert snapshot["type"] == "lobby_snapshot"
         assert snapshot["lobby_id"] == lobby_id
+        s = get_settings()
         assert snapshot["lobby"]["players"] == [
-            {"player_id": pid, "display_name": pid},
+            {"player_id": pid, "display_name": pid, "is_leader": True},
         ]
+        assert snapshot["lobby"]["challenge_count"] == s.challenge_count
+        assert snapshot["lobby"]["round_duration_seconds"] == s.round_duration_seconds
+        assert (
+            snapshot["lobby"]["max_attempts_per_second"] == s.max_attempts_per_second
+        )
 
 
 def test_connect_creates_player() -> None:

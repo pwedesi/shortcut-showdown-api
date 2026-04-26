@@ -6,11 +6,11 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.game_rooms import game_room_to_response
+from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.lobby_manager import lobby_manager
 from app.models.game_room import GameRoomView
-from app.models.lobby import Lobby, LobbyView
-from app.models.player import PlayerIdentityView
+from app.models.lobby import Lobby, LobbyPlayerView, LobbyView
 
 router = APIRouter(prefix="/lobbies", tags=["lobbies"])
 
@@ -22,23 +22,28 @@ class PlayerIdBody(BaseModel):
 
 
 async def _lobby_to_response(lobby: Lobby) -> LobbyView:
-    players: list[PlayerIdentityView] = []
+    players: list[LobbyPlayerView] = []
     for player_id in lobby.players:
         player = await connection_manager.get_player(player_id)
         display_name = player_id
         if player is not None and player.display_name:
             display_name = player.display_name
         players.append(
-            PlayerIdentityView(
+            LobbyPlayerView(
                 player_id=player_id,
                 display_name=display_name,
+                is_leader=player_id == lobby.leader_id,
             )
         )
 
+    settings = get_settings()
     return LobbyView(
         id=lobby.id,
         players=players,
         status=lobby.status,
+        challenge_count=settings.challenge_count,
+        round_duration_seconds=settings.round_duration_seconds,
+        max_attempts_per_second=settings.max_attempts_per_second,
     )
 
 

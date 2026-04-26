@@ -22,6 +22,17 @@ from app.models.game_room import (
 )
 from app.services.shortcut_engine import publicize_challenges
 
+# Map raw client tokens to a single canonical name so different browsers / input
+# libraries still match the same `expectedKeys` (e.g. "return" vs "enter").
+_KEY_TOKEN_SYNONYMS: dict[str, str] = {
+    "control": "ctrl",
+    "del": "delete",
+    "numpadenter": "enter",
+    "return": "enter",
+    "shiftleft": "shift",
+    "shiftright": "shift",
+}
+
 
 class GameEngine:
     """Server-owned state machine for multiplayer gameplay."""
@@ -30,8 +41,17 @@ class GameEngine:
         self._lock = asyncio.Lock()
 
     @staticmethod
+    def _canonical_key_token(value: str) -> str:
+        token = str(value).strip().lower()
+        if not token:
+            return token
+        return _KEY_TOKEN_SYNONYMS.get(token, token)
+
+    @staticmethod
     def _normalize_keys(keys: list[str]) -> tuple[str, ...]:
-        normalized = {str(k).strip().lower() for k in keys if str(k).strip()}
+        normalized = {
+            GameEngine._canonical_key_token(k) for k in keys if str(k).strip()
+        }
         return tuple(sorted(normalized))
 
     @staticmethod

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import re
 
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.lobby_manager import lobby_manager
 from app.main import app
@@ -20,6 +20,7 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
         res = client.post("/lobbies", json={"player_id": pid})
         assert res.status_code == 201
         body = res.json()
+        s = get_settings()
         update = ws.receive_json()
         assert update["type"] == "lobby_updated"
         assert update["lobby_id"] == body["id"]
@@ -27,17 +28,30 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
             {
                 "player_id": pid,
                 "display_name": pid,
+                "is_leader": True,
             }
         ]
+        assert update["lobby"]["challenge_count"] == s.challenge_count
+        assert update["lobby"]["round_duration_seconds"] == s.round_duration_seconds
+        assert (
+            update["lobby"]["max_attempts_per_second"] == s.max_attempts_per_second
+        )
         assert "id" in body
         assert body["players"] == [
             {
                 "player_id": pid,
                 "display_name": pid,
+                "is_leader": True,
             }
         ]
         assert body["status"] == "waiting"
-        assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", body["id"]) is not None
+        assert body["challenge_count"] == s.challenge_count
+        assert body["round_duration_seconds"] == s.round_duration_seconds
+        assert body["max_attempts_per_second"] == s.max_attempts_per_second
+        assert len(body["id"]) == 7
+        assert all(
+            c in "ABCDEFGHJKMNPQRSTUVWXYZ23456789" for c in body["id"]
+        )
 
         async def check_player() -> None:
             p = await connection_manager.get_player(pid)
@@ -58,18 +72,33 @@ def test_join_makes_full_and_get_lists_players() -> None:
             created = client.post("/lobbies", json={"player_id": p1})
             lobby_id = created.json()["id"]
 
+            s = get_settings()
             created_update = ws1.receive_json()
             assert created_update["type"] == "lobby_updated"
             assert created_update["lobby"]["players"] == [
-                {"player_id": p1, "display_name": p1},
+                {"player_id": p1, "display_name": p1, "is_leader": True},
             ]
+            assert created_update["lobby"]["challenge_count"] == s.challenge_count
+            assert (
+                created_update["lobby"]["round_duration_seconds"]
+                == s.round_duration_seconds
+            )
+            assert (
+                created_update["lobby"]["max_attempts_per_second"]
+                == s.max_attempts_per_second
+            )
 
             joined = client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
             assert joined.status_code == 200
             assert joined.json()["status"] == "full"
-            assert [
-                player["player_id"] for player in joined.json()["players"]
-            ] == [p1, p2]
+            j = joined.json()
+            jbody = j["players"]
+            assert [player["player_id"] for player in jbody] == [p1, p2]
+            assert jbody[0]["is_leader"] is True
+            assert jbody[1]["is_leader"] is False
+            assert j["challenge_count"] == s.challenge_count
+            assert j["round_duration_seconds"] == s.round_duration_seconds
+            assert j["max_attempts_per_second"] == s.max_attempts_per_second
 
             update1 = ws1.receive_json()
             update2 = ws2.receive_json()
@@ -122,6 +151,34 @@ def test_leave_last_player_deletes_lobby() -> None:
         asyncio.run(check_gone())
 
 
+def test_creator_leave_promotes_new_leader() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws1:
+        p1 = ws1.receive_json()["player_id"]
+        with client.websocket_connect("/ws") as ws2:
+            p2 = ws2.receive_json()["player_id"]
+
+            lobby_id = client.post("/lobbies", json={"player_id": p1}).json()["id"]
+            client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
+
+            client.post(f"/lobbies/{lobby_id}/leave", json={"player_id": p1})
+
+            # p2 must stay connected or disconnect cleanup empties the lobby
+            got = client.get(f"/lobbies/{lobby_id}")
+            assert got.status_code == 200
+            pl = got.json()["players"]
+            assert len(pl) == 1
+            assert pl[0]["player_id"] == p2
+            assert pl[0]["is_leader"] is True
+
+            async def check_lobby() -> None:
+                lobby = await lobby_manager.get_lobby(lobby_id)
+                assert lobby is not None
+                assert lobby.leader_id == p2
+
+            asyncio.run(check_lobby())
+
+
 def test_leave_updates_remaining_player_status() -> None:
     client = TestClient(app)
     with client.websocket_connect("/ws") as ws1:
@@ -143,6 +200,7 @@ def test_leave_updates_remaining_player_status() -> None:
             lobby = await lobby_manager.get_lobby(lobby_id)
             assert lobby is not None
             assert lobby.players == (p1,)
+            assert lobby.leader_id == p1
             assert lobby.status.value == "waiting"
 
         asyncio.run(check())

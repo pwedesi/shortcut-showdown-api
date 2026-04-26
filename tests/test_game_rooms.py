@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import time
-import re
 
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.main import app
 from app.models.player import PlayerStatus
+
+_LOBBY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def _assert_lobby_code(s: str) -> None:
+    assert len(s) == 7
+    assert all(c in _LOBBY_CODE_ALPHABET for c in s)
 
 
 def test_start_converts_lobby_to_game_room_and_locks() -> None:
@@ -31,7 +38,7 @@ def test_start_converts_lobby_to_game_room_and_locks() -> None:
             assert res.status_code == 200
             body = res.json()
             assert body["id"] == lobby_id
-            assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", body["id"]) is not None
+            _assert_lobby_code(body["id"])
             assert body["players"] == [p1, p2]
             assert body["locked"] is True
             # a shared sequence of shortcut challenges should be present
@@ -197,7 +204,10 @@ def test_finished_match_results_include_podium_and_display_names() -> None:
             assert result.status_code == 200
             assert result.json()["game_state"]["status"] == "finished"
 
-            got = client.get(f"/game-rooms/{lobby_id}/results", params={"player_id": p1})
+            got = client.get(
+                f"/game-rooms/{lobby_id}/results",
+                params={"player_id": p1},
+            )
             assert got.status_code == 200
             body = got.json()
 
@@ -258,16 +268,24 @@ def test_rematch_creates_new_lobby_with_same_roster() -> None:
 
             assert body["room_id"] == lobby_id
             assert next_lobby_id != lobby_id
-            assert re.fullmatch(r"[A-HJKMNP-TV-Z2-9]{7}", next_lobby_id) is not None
+            _assert_lobby_code(next_lobby_id)
 
             lobby = client.get(f"/lobbies/{next_lobby_id}")
             assert lobby.status_code == 200
             lobby_body = lobby.json()
+            s = get_settings()
             assert lobby_body["status"] == "full"
             assert [player["player_id"] for player in lobby_body["players"]] == [
                 p1,
                 p2,
             ]
+            assert lobby_body["players"][0]["is_leader"] is True
+            assert lobby_body["players"][1]["is_leader"] is False
+            assert lobby_body["challenge_count"] == s.challenge_count
+            assert lobby_body["round_duration_seconds"] == s.round_duration_seconds
+            assert (
+                lobby_body["max_attempts_per_second"] == s.max_attempts_per_second
+            )
 
             async def check_players() -> None:
                 first = await connection_manager.get_player(p1)
@@ -322,7 +340,10 @@ def test_rematch_rejects_after_player_disconnect_and_results_remain_available() 
         assert rematch.status_code == 409
         assert rematch.json()["detail"] == "rematch_roster_changed"
 
-        results = client.get(f"/game-rooms/{lobby_id}/results", params={"player_id": p1})
+        results = client.get(
+            f"/game-rooms/{lobby_id}/results",
+            params={"player_id": p1},
+        )
         assert results.status_code == 200
         assert [entry["player_id"] for entry in results.json()["placements"]] == [
             p1,

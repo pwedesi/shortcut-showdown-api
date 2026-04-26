@@ -2,30 +2,47 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.core.lobby_manager import lobby_manager
 from app.core.game_engine import game_engine
-from app.core.websocket_protocol import build_error, build_message, parse_inbound_message
+from app.core.websocket_protocol import (
+    build_error,
+    build_message,
+    parse_inbound_message,
+)
 
 router = APIRouter(tags=["websocket"])
 
 
-async def _send_subscription_snapshot(websocket_id: str, scope: str, scope_id: str) -> None:
+async def _send_subscription_snapshot(
+    websocket_id: str,
+    scope: str,
+    scope_id: str,
+) -> None:
     if scope == "lobby":
         lobby = await lobby_manager.get_lobby(scope_id)
         if lobby is None:
-            await connection_manager.send_personal_message(websocket_id, build_error("lobby_not_found"))
+            err = build_error("lobby_not_found")
+            await connection_manager.send_personal_message(websocket_id, err)
             return
 
-        players: list[dict[str, str]] = []
+        players: list[dict[str, str | bool]] = []
         for player_id in lobby.players:
             player = await connection_manager.get_player(player_id)
             display_name = player_id
             if player is not None and player.display_name:
                 display_name = player.display_name
-            players.append({"player_id": player_id, "display_name": display_name})
+            players.append(
+                {
+                    "player_id": player_id,
+                    "display_name": display_name,
+                    "is_leader": player_id == lobby.leader_id,
+                }
+            )
 
+        s = get_settings()
         await connection_manager.send_personal_message(
             websocket_id,
             build_message(
@@ -36,6 +53,9 @@ async def _send_subscription_snapshot(websocket_id: str, scope: str, scope_id: s
                         "id": lobby.id,
                         "players": players,
                         "status": lobby.status.value,
+                        "challenge_count": s.challenge_count,
+                        "round_duration_seconds": s.round_duration_seconds,
+                        "max_attempts_per_second": s.max_attempts_per_second,
                     },
                 },
             ),
@@ -44,7 +64,8 @@ async def _send_subscription_snapshot(websocket_id: str, scope: str, scope_id: s
 
     room = await game_room_manager.get_room(scope_id)
     if room is None:
-        await connection_manager.send_personal_message(websocket_id, build_error("room_not_found"))
+        err = build_error("room_not_found")
+        await connection_manager.send_personal_message(websocket_id, err)
         return
 
     state = await game_engine.get_public_state(room)
@@ -134,7 +155,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
                     continue
 
-                await connection_manager.set_subscription(connection_id, "lobby", lobby_id)
+                await connection_manager.set_subscription(
+                    connection_id,
+                    "lobby",
+                    lobby_id,
+                )
                 await connection_manager.clear_subscription(connection_id, "room")
                 await connection_manager.send_personal_message(
                     connection_id,
@@ -181,7 +206,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
                     continue
 
-                await connection_manager.set_subscription(connection_id, "room", room_id)
+                await connection_manager.set_subscription(
+                    connection_id,
+                    "room",
+                    room_id,
+                )
                 await connection_manager.clear_subscription(connection_id, "lobby")
                 await connection_manager.send_personal_message(
                     connection_id,

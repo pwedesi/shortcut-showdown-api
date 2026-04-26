@@ -148,7 +148,7 @@ async def submit_attempt(
                 "value": {
                     "player_id": "player-a",
                     "objective_index": 3,
-                    "keys": ["ctrl", "s"],
+                    "keys": ["ctrl", "c"],
                     "attempt_id": "attempt-0003",
                 },
             },
@@ -157,7 +157,7 @@ async def submit_attempt(
                 "value": {
                     "player_id": "player-a",
                     "objective_index": 8,
-                    "keys": ["ctrl", "s"],
+                    "keys": ["ctrl", "c"],
                     "attempt_id": "attempt-0004",
                 },
             },

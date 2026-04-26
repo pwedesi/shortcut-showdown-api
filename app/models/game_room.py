@@ -300,7 +300,7 @@ class AttemptRequest(BaseModel):
             "example": {
                 "player_id": "player-a",
                 "objective_index": 3,
-                "keys": ["ctrl", "s"],
+                "keys": ["ctrl", "c"],
                 "attempt_id": "attempt-0003",
             }
         }

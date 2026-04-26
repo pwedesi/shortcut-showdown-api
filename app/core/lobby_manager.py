@@ -12,7 +12,10 @@ from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
 from app.core.game_room_manager import game_room_manager
 from app.core.websocket_protocol import build_message
-from app.services.shortcut_engine import generate_shortcut_sequence, publicize_challenges
+from app.services.shortcut_engine import (
+    generate_shortcut_sequence,
+    publicize_challenges,
+)
 from app.models.game_room import GameRoom, GameSessionStatus
 from app.models.lobby import Lobby, LobbyStatus
 from app.models.player import PlayerStatus
@@ -20,6 +23,19 @@ from app.models.player import PlayerStatus
 
 _LOBBY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _LOBBY_CODE_LENGTH = 7
+
+
+def _leader_after_remove(
+    lobby: Lobby,
+    removed_id: str,
+    remaining: tuple[str, ...],
+) -> str:
+    """If the leader leaves, the next member becomes leader. Else unchanged."""
+    if not remaining:
+        return lobby.leader_id
+    if removed_id == lobby.leader_id:
+        return remaining[0]
+    return lobby.leader_id
 
 
 class LobbyManager:
@@ -45,18 +61,28 @@ class LobbyManager:
             return lobby_id
 
     async def _public_lobby_payload(self, lobby: Lobby) -> dict[str, Any]:
-        players: list[dict[str, str]] = []
+        players: list[dict[str, str | bool]] = []
         for player_id in lobby.players:
             player = await connection_manager.get_player(player_id)
             display_name = player_id
             if player is not None and player.display_name:
                 display_name = player.display_name
-            players.append({"player_id": player_id, "display_name": display_name})
+            players.append(
+                {
+                    "player_id": player_id,
+                    "display_name": display_name,
+                    "is_leader": player_id == lobby.leader_id,
+                }
+            )
 
+        s = get_settings()
         return {
             "id": lobby.id,
             "players": players,
             "status": lobby.status.value,
+            "challenge_count": s.challenge_count,
+            "round_duration_seconds": s.round_duration_seconds,
+            "max_attempts_per_second": s.max_attempts_per_second,
         }
 
     async def _broadcast_lobby_update(
@@ -99,6 +125,7 @@ class LobbyManager:
                 id=lobby_id,
                 players=(player_id,),
                 status=self._status_for_count(1, max_players),
+                leader_id=player_id,
             )
             self._lobbies[lobby_id] = created
 
@@ -109,7 +136,11 @@ class LobbyManager:
         )
         await connection_manager.set_subscription(player_id, "lobby", created.id)
         await connection_manager.clear_subscription(player_id, "room")
-        await self._broadcast_lobby_update(created, change="created", actor_player_id=player_id)
+        await self._broadcast_lobby_update(
+            created,
+            change="created",
+            actor_player_id=player_id,
+        )
         return created
 
     async def join_lobby(self, lobby_id: str, player_id: str) -> Lobby:
@@ -146,6 +177,7 @@ class LobbyManager:
                 id=lobby.id,
                 players=new_players,
                 status=self._status_for_count(len(new_players), max_players),
+                leader_id=lobby.leader_id,
             )
             self._lobbies[lobby_id] = updated
 
@@ -156,7 +188,11 @@ class LobbyManager:
         )
         await connection_manager.set_subscription(player_id, "lobby", lobby_id)
         await connection_manager.clear_subscription(player_id, "room")
-        await self._broadcast_lobby_update(updated, change="joined", actor_player_id=player_id)
+        await self._broadcast_lobby_update(
+            updated,
+            change="joined",
+            actor_player_id=player_id,
+        )
         return updated
 
     async def leave_lobby(self, lobby_id: str, player_id: str) -> None:
@@ -176,10 +212,12 @@ class LobbyManager:
             if not new_players:
                 del self._lobbies[lobby_id]
             else:
+                new_leader = _leader_after_remove(lobby, player_id, new_players)
                 self._lobbies[lobby_id] = Lobby(
                     id=lobby.id,
                     players=new_players,
                     status=self._status_for_count(len(new_players), max_players),
+                    leader_id=new_leader,
                 )
 
         await connection_manager.update_player(
@@ -192,7 +230,11 @@ class LobbyManager:
 
         remaining_lobby = await self.get_lobby(lobby_id)
         if remaining_lobby is not None:
-            await self._broadcast_lobby_update(remaining_lobby, change="left", actor_player_id=player_id)
+            await self._broadcast_lobby_update(
+                remaining_lobby,
+                change="left",
+                actor_player_id=player_id,
+            )
 
     async def get_lobby(self, lobby_id: str) -> Lobby | None:
         """Return a lobby by id, or None if missing."""
@@ -218,14 +260,16 @@ class LobbyManager:
             rng = random.Random(lobby_id)
             challenges = generate_shortcut_sequence(count, rng=rng)
             now = time.time()
-            round_duration = max(1, int(getattr(settings, "round_duration_seconds", 90)))
+            raw_dur = getattr(settings, "round_duration_seconds", 90)
+            round_duration = max(1, int(raw_dur))
 
             player_display_names: dict[str, str] = {}
             for pid in lobby.players:
                 player = await connection_manager.get_player(pid)
-                player_display_names[pid] = (
-                    player.display_name if player is not None and player.display_name else pid
-                )
+                if player is not None and player.display_name:
+                    player_display_names[pid] = player.display_name
+                else:
+                    player_display_names[pid] = pid
 
             room = GameRoom(
                 id=lobby_id,
@@ -339,6 +383,7 @@ class LobbyManager:
                 id=lobby_id,
                 players=tuple(validated_players),
                 status=self._status_for_count(len(validated_players), max_players),
+                leader_id=validated_players[0],
             )
             self._lobbies[lobby_id] = created
 
@@ -353,7 +398,11 @@ class LobbyManager:
                 if updated is None:
                     raise ValueError("rematch_roster_changed")
                 updated_players.append(player_id)
-                await connection_manager.set_subscription(player_id, "lobby", created.id)
+                await connection_manager.set_subscription(
+                    player_id,
+                    "lobby",
+                    created.id,
+                )
                 await connection_manager.clear_subscription(player_id, "room")
         except Exception:
             async with self._lock:
@@ -364,7 +413,11 @@ class LobbyManager:
                     status=PlayerStatus.IN_GAME,
                     current_room=source_room_id,
                 )
-                await connection_manager.set_subscription(player_id, "room", source_room_id)
+                await connection_manager.set_subscription(
+                    player_id,
+                    "room",
+                    source_room_id,
+                )
                 await connection_manager.clear_subscription(player_id, "lobby")
             raise
 
@@ -387,10 +440,12 @@ class LobbyManager:
                 if not new_players:
                     del self._lobbies[lid]
                 else:
+                    new_leader = _leader_after_remove(lobby, player_id, new_players)
                     self._lobbies[lid] = Lobby(
                         id=lobby.id,
                         players=new_players,
                         status=self._status_for_count(len(new_players), max_players),
+                        leader_id=new_leader,
                     )
                 break
 
