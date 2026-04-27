@@ -29,6 +29,7 @@ class LobbyPlayerView(BaseModel):
     player_id: str
     display_name: str
     is_leader: bool
+    is_ready: bool
 
 
 class LobbyView(BaseModel):
@@ -43,11 +44,13 @@ class LobbyView(BaseModel):
                         "player_id": "player-a",
                         "display_name": "OPERATOR_01",
                         "is_leader": True,
+                        "is_ready": True,
                     },
                     {
                         "player_id": "player-b",
                         "display_name": "MAVERICK",
                         "is_leader": False,
+                        "is_ready": False,
                     },
                 ],
                 "status": "waiting",

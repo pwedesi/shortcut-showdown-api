@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DISPLAY_NAME_MAX_LENGTH = 24
 _DISPLAY_NAME_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9 _-]+$")
@@ -32,18 +32,26 @@ class PlayerStatus(StrEnum):
     IN_GAME = "in-game"
 
 
-class UpdateDisplayNameRequest(BaseModel):
-    """Write payload for setting a player's callsign."""
+class UpdatePlayerRequest(BaseModel):
+    """Write payload for setting a player's public fields."""
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "display_name": "OPERATOR_01",
+                "is_ready": True,
             }
         }
     )
 
-    display_name: str = Field()
+    display_name: str | None = Field(default=None)
+    is_ready: bool | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _validate_non_empty_patch(self) -> "UpdatePlayerRequest":
+        if self.display_name is None and self.is_ready is None:
+            raise ValueError("empty_patch")
+        return self
 
 
 class PlayerIdentityView(BaseModel):
@@ -54,12 +62,14 @@ class PlayerIdentityView(BaseModel):
             "example": {
                 "player_id": "9e808624-7b6d-4d0f-a0f9-4afc06de2d54",
                 "display_name": "OPERATOR_01",
+                "is_ready": False,
             }
         }
     )
 
     player_id: str
     display_name: str
+    is_ready: bool
 
 
 class Player(BaseModel):
@@ -71,3 +81,4 @@ class Player(BaseModel):
     display_name: str = ""
     status: PlayerStatus = PlayerStatus.IDLE
     current_room: str | None = None
+    is_ready: bool = False

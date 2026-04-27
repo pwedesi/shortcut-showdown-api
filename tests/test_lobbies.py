@@ -29,6 +29,7 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
                 "player_id": pid,
                 "display_name": pid,
                 "is_leader": True,
+                "is_ready": False,
             }
         ]
         assert update["lobby"]["challenge_count"] == s.challenge_count
@@ -42,6 +43,7 @@ def test_create_lobby_returns_waiting_and_single_player() -> None:
                 "player_id": pid,
                 "display_name": pid,
                 "is_leader": True,
+                "is_ready": False,
             }
         ]
         assert body["status"] == "waiting"
@@ -76,7 +78,12 @@ def test_join_makes_full_and_get_lists_players() -> None:
             created_update = ws1.receive_json()
             assert created_update["type"] == "lobby_updated"
             assert created_update["lobby"]["players"] == [
-                {"player_id": p1, "display_name": p1, "is_leader": True},
+                {
+                    "player_id": p1,
+                    "display_name": p1,
+                    "is_leader": True,
+                    "is_ready": False,
+                },
             ]
             assert created_update["lobby"]["challenge_count"] == s.challenge_count
             assert (

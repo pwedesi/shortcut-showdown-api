@@ -26,13 +26,17 @@ async def _lobby_to_response(lobby: Lobby) -> LobbyView:
     for player_id in lobby.players:
         player = await connection_manager.get_player(player_id)
         display_name = player_id
+        is_ready = False
         if player is not None and player.display_name:
             display_name = player.display_name
+        if player is not None:
+            is_ready = player.is_ready
         players.append(
             LobbyPlayerView(
                 player_id=player_id,
                 display_name=display_name,
                 is_leader=player_id == lobby.leader_id,
+                is_ready=is_ready,
             )
         )
 

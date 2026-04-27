@@ -10,7 +10,7 @@ from fastapi import WebSocket
 
 from app.models.player import Player, PlayerStatus
 
-_ALLOWED_PLAYER_FIELDS = frozenset({"display_name", "status", "current_room"})
+_ALLOWED_PLAYER_FIELDS = frozenset({"display_name", "status", "current_room", "is_ready"})
 
 
 class ConnectionManager:

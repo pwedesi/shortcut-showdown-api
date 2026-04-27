@@ -31,6 +31,7 @@ def test_set_display_name_is_returned_in_lobby_payload() -> None:
             assert set_1.json() == {
                 "player_id": p1,
                 "display_name": "OPERATOR_01",
+                "is_ready": False,
             }
 
             set_2 = client.patch(
@@ -127,8 +128,30 @@ def test_display_name_can_change_mid_lobby() -> None:
                 "player_id": pid,
                 "display_name": "VETERAN",
                 "is_leader": True,
+                "is_ready": False,
             }
         ]
         assert g["challenge_count"] == s.challenge_count
         assert g["round_duration_seconds"] == s.round_duration_seconds
         assert g["max_attempts_per_second"] == s.max_attempts_per_second
+
+
+def test_set_ready_is_returned_in_lobby_payload() -> None:
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws1:
+        p1 = ws1.receive_json()["player_id"]
+        with client.websocket_connect("/ws") as ws2:
+            p2 = ws2.receive_json()["player_id"]
+
+            lobby_id = client.post("/lobbies", json={"player_id": p1}).json()["id"]
+            client.post(f"/lobbies/{lobby_id}/join", json={"player_id": p2})
+
+            ready = client.patch(f"/players/{p2}", json={"is_ready": True})
+            assert ready.status_code == 200
+            assert ready.json()["is_ready"] is True
+
+            got = client.get(f"/lobbies/{lobby_id}")
+            assert got.status_code == 200
+            roster = _players_by_id(got.json()["players"])
+            assert roster[p1]["is_ready"] is False
+            assert roster[p2]["is_ready"] is True

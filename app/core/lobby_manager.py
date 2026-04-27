@@ -65,13 +65,17 @@ class LobbyManager:
         for player_id in lobby.players:
             player = await connection_manager.get_player(player_id)
             display_name = player_id
+            is_ready = False
             if player is not None and player.display_name:
                 display_name = player.display_name
+            if player is not None:
+                is_ready = bool(player.is_ready)
             players.append(
                 {
                     "player_id": player_id,
                     "display_name": display_name,
                     "is_leader": player_id == lobby.leader_id,
+                    "is_ready": is_ready,
                 }
             )
 
@@ -133,6 +137,7 @@ class LobbyManager:
             player_id,
             status=PlayerStatus.LOBBY,
             current_room=created.id,
+            is_ready=False,
         )
         await connection_manager.set_subscription(player_id, "lobby", created.id)
         await connection_manager.clear_subscription(player_id, "room")
@@ -185,6 +190,7 @@ class LobbyManager:
             player_id,
             status=PlayerStatus.LOBBY,
             current_room=lobby_id,
+            is_ready=False,
         )
         await connection_manager.set_subscription(player_id, "lobby", lobby_id)
         await connection_manager.clear_subscription(player_id, "room")
@@ -224,6 +230,7 @@ class LobbyManager:
             player_id,
             status=PlayerStatus.IDLE,
             current_room=None,
+            is_ready=False,
         )
         await connection_manager.clear_subscription(player_id, "lobby")
         await connection_manager.clear_subscription(player_id, "room")
@@ -252,6 +259,10 @@ class LobbyManager:
             if player_id not in lobby.players:
                 self._lobbies[lobby_id] = lobby
                 msg = "Player is not in this lobby"
+                raise ValueError(msg)
+            if player_id != lobby.leader_id:
+                self._lobbies[lobby_id] = lobby
+                msg = "Only the room leader can start"
                 raise ValueError(msg)
 
             # generate a shared challenge sequence for the room
@@ -318,6 +329,7 @@ class LobbyManager:
                 pid,
                 status=PlayerStatus.IN_GAME,
                 current_room=room.id,
+                is_ready=False,
             )
             await connection_manager.set_subscription(pid, "room", room.id)
             await connection_manager.clear_subscription(pid, "lobby")
