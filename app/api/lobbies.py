@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.game_rooms import game_room_to_response
 from app.core.config import get_settings
 from app.core.connection_manager import connection_manager
+
+logger = logging.getLogger(__name__)
 from app.core.lobby_manager import lobby_manager
 from app.models.game_room import GameRoomView
 from app.models.lobby import Lobby, LobbyPlayerView, LobbyView
@@ -19,6 +23,27 @@ class PlayerIdBody(BaseModel):
     """Request body carrying a single active player id."""
 
     player_id: str
+
+
+class SetMaxPlayersBody(BaseModel):
+    """Request body for setting max players in a lobby."""
+
+    player_id: str
+    max_players: int
+
+
+class SetChallengeCountBody(BaseModel):
+    """Request body for setting the number of challenges (papers) in a lobby."""
+
+    player_id: str
+    challenge_count: int
+
+
+class SetRoundDurationBody(BaseModel):
+    """Request body for setting the round duration in a lobby."""
+
+    player_id: str
+    round_duration_seconds: int
 
 
 async def _lobby_to_response(lobby: Lobby) -> LobbyView:
@@ -45,9 +70,11 @@ async def _lobby_to_response(lobby: Lobby) -> LobbyView:
         id=lobby.id,
         players=players,
         status=lobby.status,
-        challenge_count=settings.challenge_count,
-        round_duration_seconds=settings.round_duration_seconds,
+        challenge_count=lobby.challenge_count,
+        round_duration_seconds=lobby.round_duration_seconds,
         max_attempts_per_second=settings.max_attempts_per_second,
+        locked=lobby.locked,
+        max_players=lobby.max_players,
     )
 
 
@@ -69,9 +96,27 @@ async def create_lobby(body: PlayerIdBody) -> LobbyView:
     return await _lobby_to_response(lobby)
 
 
+@router.post("/quick-play", response_model=LobbyView)
+async def quick_play(body: PlayerIdBody) -> LobbyView:
+    """Auto-join a random available unlocked lobby or create a new one."""
+    try:
+        lobby = await lobby_manager.quick_play(body.player_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return await _lobby_to_response(lobby)
+
+
 @router.post("/{lobby_id}/join", response_model=LobbyView)
 async def join_lobby(lobby_id: str, body: PlayerIdBody) -> LobbyView:
-    """Join an existing lobby when it is not full."""
+    """Join an existing lobby when it is not full. (Locked status is hidden from quick-play but directly joinable)."""
     try:
         lobby = await lobby_manager.join_lobby(lobby_id, body.player_id)
     except LookupError as exc:
@@ -131,4 +176,100 @@ async def get_lobby(lobby_id: str) -> LobbyView:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lobby not found",
         )
+    return await _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/lock", response_model=LobbyView)
+async def lock_lobby(lobby_id: str, body: PlayerIdBody) -> LobbyView:
+    """Host locks the lobby to prevent new players from joining (quickplay hidden)."""
+    try:
+        lobby = await lobby_manager.lock_lobby(lobby_id, body.player_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return await _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/unlock", response_model=LobbyView)
+async def unlock_lobby(lobby_id: str, body: PlayerIdBody) -> LobbyView:
+    """Host unlocks the lobby to allow new players from quickplay."""
+    try:
+        lobby = await lobby_manager.unlock_lobby(lobby_id, body.player_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return await _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/set-max-players", response_model=LobbyView)
+async def set_max_players(lobby_id: str, body: SetMaxPlayersBody) -> LobbyView:
+    """Host sets the maximum number of players for the lobby."""
+    try:
+        lobby = await lobby_manager.set_max_players(
+            lobby_id, body.player_id, body.max_players
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return await _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/set-challenge-count", response_model=LobbyView)
+async def set_challenge_count(lobby_id: str, body: SetChallengeCountBody) -> LobbyView:
+    """Host sets the number of challenges (papers) for the lobby."""
+    try:
+        lobby = await lobby_manager.set_challenge_count(
+            lobby_id, body.player_id, body.challenge_count
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return await _lobby_to_response(lobby)
+
+
+@router.post("/{lobby_id}/set-round-duration", response_model=LobbyView)
+async def set_round_duration(lobby_id: str, body: SetRoundDurationBody) -> LobbyView:
+    """Host sets the maximum duration for the match in the lobby."""
+    try:
+        lobby = await lobby_manager.set_round_duration(
+            lobby_id, body.player_id, body.round_duration_seconds
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     return await _lobby_to_response(lobby)

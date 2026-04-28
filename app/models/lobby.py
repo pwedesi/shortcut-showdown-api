@@ -21,6 +21,10 @@ class Lobby(BaseModel):
     players: tuple[str, ...] = Field(default_factory=tuple)
     status: LobbyStatus = LobbyStatus.WAITING
     leader_id: str
+    locked: bool = False
+    max_players: int = 4
+    challenge_count: int = 10
+    round_duration_seconds: int = 90
 
 
 class LobbyPlayerView(BaseModel):
@@ -57,6 +61,8 @@ class LobbyView(BaseModel):
                 "challenge_count": 10,
                 "round_duration_seconds": 90,
                 "max_attempts_per_second": 8,
+                "locked": False,
+                "max_players": 4,
             }
         }
     )
@@ -67,3 +73,5 @@ class LobbyView(BaseModel):
     challenge_count: int
     round_duration_seconds: int
     max_attempts_per_second: int
+    locked: bool
+    max_players: int
